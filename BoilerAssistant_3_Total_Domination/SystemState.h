@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System State API (v3.0 "Total Domination")
+ *  Boiler Assistant – System State API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemState.h
  *  Author: The Architect Collective
@@ -25,7 +25,7 @@
  *      - All modules must treat these enums as canonical.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -44,6 +44,10 @@
 #define PROBE_ROLE_COUNT 8
 #endif
 
+#ifndef PROBE_NAME_LENGTH
+#define PROBE_NAME_LENGTH 16
+#endif
+
 /* ============================================================
  *  PROBE ROLE ENUM
  * ============================================================ */
@@ -52,10 +56,10 @@ typedef enum {
     PROBE_RETURN     = 1,
     PROBE_SUPPLY     = 2,
     PROBE_OUTDOOR    = 3,
-    PROBE_UNUSED_4   = 4,
-    PROBE_UNUSED_5   = 5,
-    PROBE_UNUSED_6   = 6,
-    PROBE_UNUSED_7   = 7
+    PROBE_TANK_BOTTOM = 4,
+    PROBE_TANK_TOP    = 5,
+    PROBE_EXTRA       = 6,
+    PROBE_SPARE       = 7
 } ProbeRole;
 
 /* ============================================================
@@ -82,8 +86,12 @@ typedef enum {
  * ============================================================ */
 typedef enum {
     SAFETY_OK = 0,
-    SAFETY_HIGHTEMP = 1
+    SAFETY_HIGHTEMP = 1,
+    SAFETY_SENSOR_FAULT = 2
 } SafetyState;
+
+#define SENSOR_FAULT_EXHAUST 0x01
+#define SENSOR_FAULT_TANK    0x02
 
 /* ============================================================
  *  ENVIRONMENTAL SEASON

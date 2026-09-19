@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Keypad I²C Driver (v3.0 "Total Domination")
+ *  Boiler Assistant – Keypad I²C Driver (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.cpp
  *  Author: The Architect Collective
@@ -28,7 +28,7 @@
  *      - All timing uses millis() and remains non‑blocking
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 

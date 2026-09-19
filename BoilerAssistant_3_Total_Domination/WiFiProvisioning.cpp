@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – WiFi Provisioning Module (v3.0 "Total Domination")
+ *  Boiler Assistant – WiFi Provisioning Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - AP mode is authoritative when STA fails or no creds exist
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -63,12 +63,13 @@ static const char* PROV_HTML =
 "<!DOCTYPE html><html><body>"
 "<h2>Boiler Assistant WiFi Setup</h2>"
 "<form method='POST'>"
+"Your name:<br><input name='displayName' maxlength='31'><br><br>"
 "WiFi SSID:<br><input name='ssid'><br>"
 "WiFi Password:<br><input name='pass' type='password'><br><br>"
 "MQTT Server:<br><input name='mqttServer'><br>"
 "MQTT User:<br><input name='mqttUser'><br>"
 "MQTT Password:<br><input name='mqttPass' type='password'><br><br>"
-"OTA Password:<br><input name='otaPass' type='password'><br><br>"
+"Control/API Password:<br><input name='controlPass' type='password'><br><br>"
 "<input type='submit' value='Save'>"
 "</form></body></html>";
 
@@ -128,6 +129,7 @@ void wifi_prov_init() {
     Serial.println("WiFiProvisioning: init (STA-first, AP-fallback)");
 
     sys.wifiOK = false;
+    WiFi.setHostname("boilerassistant");
 
     if (runtimeCreds.hasCredentials && runtimeCreds.ssid[0] != 0) {
         Serial.print("WiFiProvisioning: Using runtime SSID: ");
@@ -145,6 +147,7 @@ void wifi_prov_init() {
                 Serial.println("WiFiProvisioning: STA connected via runtime creds");
                 Serial.print("WiFiProvisioning: IP: ");
                 Serial.println(WiFi.localIP());
+                Serial.println("WiFiProvisioning: Dashboard: http://boilerassistant/");
 
                 apMode     = false;
                 sys.wifiOK = true;
@@ -200,7 +203,8 @@ static void parseForm(const String& body) {
     String mqttServer = getVal("mqttServer");
     String mqttUser   = getVal("mqttUser");
     String mqttPass   = getVal("mqttPass");
-    String otaPass    = getVal("otaPass");
+    String controlPass = getVal("controlPass");
+    String displayName = getVal("displayName");
 
     if (ssid.length() == 0 || pass.length() == 0) {
         Serial.println("WiFiProvisioning: missing SSID or password");
@@ -223,8 +227,18 @@ static void parseForm(const String& body) {
     strncpy(runtimeCreds.mqttPass, mqttPass.c_str(), sizeof(runtimeCreds.mqttPass) - 1);
     runtimeCreds.mqttPass[sizeof(runtimeCreds.mqttPass) - 1] = '\0';
 
-    strncpy(runtimeCreds.otaPass, otaPass.c_str(), sizeof(runtimeCreds.otaPass) - 1);
-    runtimeCreds.otaPass[sizeof(runtimeCreds.otaPass) - 1] = '\0';
+    strncpy(runtimeCreds.controlPass, controlPass.c_str(), sizeof(runtimeCreds.controlPass) - 1);
+    runtimeCreds.controlPass[sizeof(runtimeCreds.controlPass) - 1] = '\0';
+
+    displayName.trim();
+    displayName.toUpperCase();
+    if (displayName.length() > 20) displayName.remove(20);
+    if (displayName.length() >= sizeof(runtimeCreds.displayName)) {
+        displayName.remove(sizeof(runtimeCreds.displayName) - 1);
+    }
+    strncpy(runtimeCreds.displayName, displayName.c_str(),
+            sizeof(runtimeCreds.displayName) - 1);
+    runtimeCreds.displayName[sizeof(runtimeCreds.displayName) - 1] = '\0';
 
     runtimeCreds.hasCredentials = true;
     newCreds = true;
@@ -249,13 +263,10 @@ void wifi_prov_loop() {
     WiFiClient client = provServer.available();
     if (!client) return;
 
+    client.setTimeout(25);
     String req;
-    unsigned long start = millis();
-
-    while (client.connected() && (millis() - start < 2000)) {
-        while (client.available()) {
-            req += (char)client.read();
-        }
+    while (client.available()) {
+        req += (char)client.read();
     }
 
     if (req.length() == 0) return;

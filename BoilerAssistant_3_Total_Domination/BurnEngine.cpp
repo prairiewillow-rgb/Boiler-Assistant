@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Burn Engine Module (v3.0 "Total Domination")
+ *  Boiler Assistant – Burn Engine Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -19,7 +19,7 @@
  *      - Dampers (inverted polarity, Version B)
  *      - Legacy v2.2 → v3.x compatibility shims
  *
- *  v3.0 Additions:
+ *  v3.1 Additions:
  *      - Standardized state transitions under TDA
  *      - Unified exhaust smoothing + control pathways
  *      - Guardian latch behavior aligned with SystemData contract
@@ -33,7 +33,7 @@
  *      - All timing uses millis() and remains strictly non‑blocking
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -43,6 +43,7 @@
 #include "FanControl.h"
 #include "Sensors.h"
 #include "Pinout.h"
+#include "EEPROMStorage.h"
 
 extern SystemData sys;
 
@@ -54,18 +55,117 @@ static int burnengine_computeContinuous();
 static int burnengine_computeHoldDemand(double exhaustControlF,
                                         unsigned long now);
 
+static double burnengine_holdEntryTemperature() {
+    double halfBand = sys.deadbandF / 2.0;
+    if (halfBand < 1.0) halfBand = 1.0;
+    return sys.exhaustSetpoint - halfBand;
+}
+
 /* ============================================================
  *  HOLD STABILITY LOCK (v2.3-style)
  * ============================================================ */
-static bool         holdLocked     = false;
-static unsigned long holdLockUntil = 0;
-static const unsigned long HOLD_LOCK_MS = 3000UL; // 3 seconds
+static unsigned long holdLowSinceMs = 0;
+static const unsigned long HOLD_LOW_CONFIRM_MS = 15000UL;
+static const double HOLD_EXIT_HYSTERESIS_F = 10.0;
+
+static float adaptiveSlope = 1.0f;
+static double adaptiveLastTemperature = NAN;
+static unsigned long adaptiveLastSampleMs = 0;
+static unsigned long adaptiveLastSavedMs = 0;
+static const unsigned long ADAPTIVE_SAVE_INTERVAL_MS = 3600000UL;
+
+float burnengine_getAdaptiveSlope() {
+    return adaptiveSlope;
+}
+
+static void burnengine_updateAdaptiveSlope(double exhaustControlF,
+                                           unsigned long now)
+{
+    if (isnan(exhaustControlF) ||
+        adaptiveLastSampleMs != 0 && now - adaptiveLastSampleMs < 1000UL) {
+        return;
+    }
+
+    double rate = 0.0;
+    if (adaptiveLastSampleMs != 0 && !isnan(adaptiveLastTemperature)) {
+        double elapsedSeconds = (now - adaptiveLastSampleMs) / 1000.0;
+        if (elapsedSeconds > 0.0) {
+            rate = (exhaustControlF - adaptiveLastTemperature) / elapsedSeconds;
+        }
+    }
+
+    if (adaptiveLastSampleMs != 0 && sys.deadzoneFanMode == 0) {
+        if (exhaustControlF < sys.exhaustSetpoint - 20 && rate < 0.05) {
+            adaptiveSlope += 0.005f;
+        }
+        if (exhaustControlF > sys.exhaustSetpoint + 20 && rate > 0.05) {
+            adaptiveSlope -= 0.005f;
+        }
+        adaptiveSlope = constrain(adaptiveSlope, 0.5f, 2.0f);
+
+        if (now - adaptiveLastSavedMs >= ADAPTIVE_SAVE_INTERVAL_MS) {
+            eeprom_saveAdaptiveSlope(adaptiveSlope);
+            adaptiveLastSavedMs = now;
+        }
+    }
+
+    adaptiveLastTemperature = exhaustControlF;
+    adaptiveLastSampleMs = now;
+}
+
+// Verify this limit against the boiler manufacturer's approved high limit.
+static const int TANK_HARD_LIMIT_F = 190;
+static const unsigned long EXHAUST_FAULT_CONFIRM_MS = 60000UL;
+static const unsigned long TANK_FAULT_CONFIRM_MS = 60000UL;
+static unsigned long exhaustFaultSinceMs = 0;
+static unsigned long tankFaultSinceMs = 0;
+
+void burnengine_resetSensorFault() {
+    exhaustFaultSinceMs = 0;
+    tankFaultSinceMs = 0;
+    sys.sensorFaultMask = 0;
+}
+
+void burnengine_resetAlarms() {
+    burnengine_resetSensorFault();
+    sys.exhaustFallbackActive = false;
+    sys.safetyState = SAFETY_OK;
+    sys.emberGuardianActive = false;
+    sys.emberGuardianLatched = false;
+    sys.emberGuardianTimerActive = false;
+    sys.emberGuardianStartMs = 0;
+    sys.boostActive = false;
+    sys.rampTimerActive = false;
+    sys.holdTimerActive = false;
+    sys.burnState = BURN_IDLE;
+}
+
+static bool sensorFaultConfirmed(bool faultActive,
+                                 unsigned long& faultSinceMs,
+                                 unsigned long now,
+                                 unsigned long confirmMs)
+{
+    if (!faultActive) {
+        faultSinceMs = 0;
+        return false;
+    }
+
+    if (faultSinceMs == 0) faultSinceMs = now;
+    return now - faultSinceMs >= confirmMs;
+}
 
 /* ============================================================
  *  INIT
  * ============================================================ */
 void burnengine_init() {
     sys.burnState = BURN_IDLE;
+    analogWrite(PIN_FAN_PWM, 0);
+    adaptiveSlope = eeprom_loadAdaptiveSlope();
+    adaptiveLastTemperature = NAN;
+    adaptiveLastSampleMs = 0;
+    adaptiveLastSavedMs = 0;
+    exhaustFaultSinceMs = 0;
+    tankFaultSinceMs = 0;
 
     sys.boostActive        = false;
     sys.holdTimerActive    = false;
@@ -99,6 +199,87 @@ void burnengine_startBoost() {
  *  DISPATCHER
  * ============================================================ */
 int burnengine_compute() {
+    unsigned long now = millis();
+
+    if (sys.safetyState == SAFETY_SENSOR_FAULT) {
+        digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+        sys.burnState = BURN_IDLE;
+        sys.boostActive = false;
+        sys.rampTimerActive = false;
+        sys.holdTimerActive = false;
+        return 0;
+    }
+
+    if (sys.safetyState == SAFETY_HIGHTEMP) {
+        digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+        sys.burnState = BURN_IDLE;
+        sys.boostActive = false;
+        sys.rampTimerActive = false;
+        sys.holdTimerActive = false;
+        return 0;
+    }
+
+    bool exhaustFault = !sys.exhaustSensorOK ||
+                         now - sys.exhaustLastGoodMs > 1000UL;
+    if (!exhaustFault) {
+        sys.exhaustFallbackActive = false;
+        exhaustFaultSinceMs = 0;
+    }
+
+    if (sensorFaultConfirmed(exhaustFault, exhaustFaultSinceMs, now,
+                             EXHAUST_FAULT_CONFIRM_MS)) {
+        sys.exhaustFallbackActive = true;
+        sys.sensorFaultMask |= SENSOR_FAULT_EXHAUST;
+    }
+
+    bool tankFault = true;
+    double tankF = NAN;
+
+    // Auto Tank requires a valid tank probe; Continuous mode does not.
+    if (sys.controlMode == RUNMODE_AUTO_TANK) {
+        if (sys.waterProbeCount > 0) {
+            uint8_t tankProbe = sys.probeRoleMap[PROBE_TANK];
+            if (tankProbe < sys.waterProbeCount) {
+                tankF = sys.waterTempF[tankProbe];
+                if (now - sys.waterTempLastGoodMs[tankProbe] > 3000UL) {
+                    tankF = NAN;
+                }
+            }
+            tankFault = isnan(tankF);
+        }
+
+        if (sensorFaultConfirmed(tankFault, tankFaultSinceMs, now,
+                                 TANK_FAULT_CONFIRM_MS)) {
+            sys.safetyState = SAFETY_SENSOR_FAULT;
+            sys.sensorFaultMask = SENSOR_FAULT_TANK;
+            digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+            sys.burnState = BURN_IDLE;
+            sys.boostActive = false;
+            sys.rampTimerActive = false;
+            sys.holdTimerActive = false;
+            return 0;
+        }
+    } else {
+        tankFaultSinceMs = 0;
+        sys.sensorFaultMask &= (uint8_t)~SENSOR_FAULT_TANK;
+    }
+
+    if (!tankFault && tankF >= TANK_HARD_LIMIT_F) {
+            sys.safetyState = SAFETY_HIGHTEMP;
+            digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+            sys.burnState = BURN_IDLE;
+            sys.boostActive = false;
+            sys.rampTimerActive = false;
+            sys.holdTimerActive = false;
+            return 0;
+    }
+
+    if (sys.safetyState != SAFETY_OK) {
+        digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+        sys.burnState = BURN_IDLE;
+        return 0;
+    }
+
     if (sys.controlMode == RUNMODE_CONTINUOUS) {
         return burnengine_computeContinuous();
     } else {
@@ -115,6 +296,8 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
 {
     if (isnan(exhaustControlF)) return 0;
 
+    burnengine_updateAdaptiveSlope(exhaustControlF, now);
+
     double bandHalf = sys.deadbandF / 2.0;
     if (bandHalf <= 0) bandHalf = 1.0;
 
@@ -124,23 +307,16 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
     /* ============================================================
      *  ⭐ NEW FIX: EXIT HOLD → RAMP WHEN EXHAUST DROPS BELOW BAND
      * ============================================================ */
-    if (sys.burnState == BURN_HOLD &&
-    exhaustControlF < low)
-    {
-        sys.burnState = BURN_RAMP;
-        holdLocked = false;
-        return sys.fanFinal;   // smooth transition at same fan %
-    }
-
-
-    // HOLD stability lock
-    if (sys.burnState == BURN_HOLD && !holdLocked) {
-        holdLocked     = true;
-        holdLockUntil  = now + HOLD_LOCK_MS;
-    }
-
-    if (holdLocked && now >= holdLockUntil) {
-        holdLocked = false;
+    double holdExit = low - HOLD_EXIT_HYSTERESIS_F;
+    if (sys.burnState == BURN_HOLD && exhaustControlF < holdExit) {
+        if (holdLowSinceMs == 0) holdLowSinceMs = now;
+        if (now - holdLowSinceMs >= HOLD_LOW_CONFIRM_MS) {
+            sys.burnState = BURN_RAMP;
+            holdLowSinceMs = 0;
+            return sys.fanFinal;   // smooth transition at the previous fan level
+        }
+    } else {
+        holdLowSinceMs = 0;
     }
 
     /* ============================================================
@@ -176,8 +352,9 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
             double span = bandHalf;
             double e    = low - exhaustControlF;
             if (e >= span) return 100;
-            double pct = (double)sys.clampMaxPercent * (e / span);
+            double pct = (double)sys.clampMaxPercent * (e / span) * adaptiveSlope;
             if (pct < sys.clampMinPercent) pct = sys.clampMinPercent;
+            if (pct > sys.clampMaxPercent) pct = sys.clampMaxPercent;
             return (int)pct;
         }
 
@@ -186,7 +363,8 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
             double span = bandHalf;
             double e    = exhaustControlF - high;
             if (e >= span) return 0;
-            double pct = (double)sys.clampMinPercent * (1.0 - (e / span));
+            double pct = (double)sys.clampMinPercent *
+                         (1.0 - (e / span)) * adaptiveSlope;
             if (pct < 0) pct = 0;
             return (int)pct;
         }
@@ -269,9 +447,8 @@ static int burnengine_finalize(int demand,
         demand = 0;
     }
 
-    /* APPLY FAN */
-    sys.fanFinal = fancontrol_apply(demand);
-    return sys.fanFinal;
+    /* Return demand; the main loop applies fan control and PWM once. */
+    return demand;
 }
 
 /* ============================================================
@@ -283,10 +460,10 @@ static int burnengine_computeAutoTank() {
     double exhaustControlF = sys.exhaustSmoothF;
     double exhaustGuardF   = sys.exhaustRawF;
 
-    int tankIndex = (sys.probeRoleMap[PROBE_TANK] < sys.waterProbeCount)
-                    ? sys.probeRoleMap[PROBE_TANK]
-                    : 0;
-    double tankF = sys.waterTempF[tankIndex];
+    uint8_t tankIndex = sys.probeRoleMap[PROBE_TANK];
+    double tankF = (tankIndex < sys.waterProbeCount)
+                   ? sys.waterTempF[tankIndex]
+                   : NAN;
 
     /* AUTO START */
     if (sys.burnState == BURN_IDLE) {
@@ -307,7 +484,7 @@ static int burnengine_computeAutoTank() {
             sys.holdTimerActive          = false;
             sys.emberGuardianActive      = false;
             sys.emberGuardianTimerActive = false;
-            holdLocked                   = false;
+            holdLowSinceMs              = 0;
         }
     }
 
@@ -332,7 +509,7 @@ static int burnengine_computeAutoTank() {
         }
 
         if (!isnan(exhaustControlF) &&
-            exhaustControlF >= (sys.exhaustSetpoint - 25))
+            exhaustControlF >= burnengine_holdEntryTemperature())
         {
             sys.burnState       = BURN_HOLD;
             sys.holdTimerActive = true;
@@ -414,7 +591,7 @@ static int burnengine_computeContinuous() {
         }
 
         if (!isnan(exhaustControlF) &&
-            exhaustControlF >= (sys.exhaustSetpoint - 25))
+            exhaustControlF >= burnengine_holdEntryTemperature())
         {
             sys.burnState       = BURN_HOLD;
             sys.holdTimerActive = true;

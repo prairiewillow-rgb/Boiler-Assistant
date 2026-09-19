@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Main Firmware (v3.0 "Total Domination")
+ *  Boiler Assistant – Main Firmware (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BoilerAssistant_3_Total Domination.ino
  *  Author: The Architect Collective
@@ -9,7 +9,7 @@
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.0 introduces the Total Domination Architecture (TDA):
+ *    Version 3.1 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Deterministic, non-blocking main loop
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -25,28 +25,31 @@
  *      - WiFi provisioning (STA-first, AP-fallback)
  *      - WiFi API + MQTT telemetry (async, non-blocking)
  *
- *  v3.0 Additions:
- *      - Total Domination Architecture (TDA) baseline
- *      - Strengthened SystemData propagation across all modules
- *      - Standardized LCD capitalization rules
- *      - Expanded UI edit buffers for operator clarity
- *      - Improved exhaust smoothing pipeline
- *      - Legacy compatibility shims for v2.2 → v3.x
+ *  v3.1 Additions:
+ *      - Adaptive fan curve with persistent learning
+ *      - Fan-off deadband with one-PWM variable-speed control
+ *      - Exhaust-probe fallback with 100% fan output
+ *      - Mode-aware tank-probe safety handling
+ *      - Address-stable water probes with periodic rescanning
+ *      - Named monitor-only probes for MQTT and dashboard telemetry
+ *      - Live diagnostics through the web dashboard and MQTT
+ *      - Authenticated remote alarm reset; run mode remains local-only
  *
  *  Architectural Notes:
  *      - Main loop is strictly deterministic and non-blocking
  *      - All subsystems operate on timed or event-driven cadence
  *      - WiFi + MQTT run asynchronously to avoid blocking control logic
  *      - UI executes last to ensure stable system state before rendering
- *      - NamingManifest.h is the authoritative naming contract
+ *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <WDT.h>
 
 #include "SystemState.h"          // MUST be first project header
 #include "EnvironmentalLogic.h"   // MUST be second
@@ -80,30 +83,6 @@
  *  GLOBAL STATE (minimal shims + runtime)
  * ============================================================ */
 
-BurnState   burnState   = BURN_IDLE;
-RunMode     controlMode = RUNMODE_CONTINUOUS;   // shim for any legacy users
-SafetyState safetyState = SAFETY_OK;
-
-int16_t tankLowSetpointF  = 140;   // shim
-int16_t tankHighSetpointF = 180;   // shim
-
-int16_t smoothExh      = 0;
-int16_t lastFanPercent = 0;
-int16_t lastExhaustF   = 0;
-
-bool           holdTimerActive   = false;
-unsigned long  holdStartMs       = 0;
-
-bool           rampTimerActive   = false;
-unsigned long  rampStartMs       = 0;
-
-bool           emberGuardianTimerActive = false;
-unsigned long  emberGuardianStartMs     = 0;
-
-unsigned long  boostStartMs             = 0;
-
-uint8_t globalRampProfile = 1;
-
 // UI state
 UIState uiState      = UI_HOME;
 bool    uiNeedRedraw = true;
@@ -128,6 +107,10 @@ double exhaust_readF_cached();
 
 /* Local implementation of exhaust smoothing */
 double smoothExhaustF(double rawF) {
+    if (isnan(rawF)) {
+        return sys.exhaustSmoothF;
+    }
+
     if (isnan(sys.exhaustSmoothF)) {
         sys.exhaustSmoothF = rawF;
     } else {
@@ -148,9 +131,10 @@ void setup() {
     digitalWrite(PIN_DAMPER, HIGH);   // default CLOSED
 
     pinMode(PIN_FAN_PWM, OUTPUT);
+    analogWrite(PIN_FAN_PWM, 0);
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.0 Boot ===");
+    Serial.println("=== Boiler Assistant v3.1 Boot ===");
 
     Wire.begin();
     Wire.setClock(400000);
@@ -160,11 +144,6 @@ void setup() {
 
     // Load all EEPROM-backed settings into sys.*
     eeprom_init();
-
-    // Minimal shims for any legacy modules still using these globals
-    controlMode       = sys.controlMode;
-    tankLowSetpointF  = sys.tankLowSetpointF;
-    tankHighSetpointF = sys.tankHighSetpointF;
 
     // Sensors + logic
     sensors_init();
@@ -182,7 +161,7 @@ void setup() {
         mqtt_init();
     }
 
-    burnengine_startBoost();
+    WDT.begin(8000);
 }
 
 /* ============================================================
@@ -191,14 +170,15 @@ void setup() {
 
 void loop() {
 
+    WDT.refresh();
     unsigned long now = millis();
 
     // 0) Keypad
     char k = keypad_read();
     if (k) {
         double rawExhKey = exhaust_readF_cached();
-        smoothExh = (int16_t)smoothExhaustF(rawExhKey);
-        ui_handleKey(k, smoothExh, lastFanPercent);
+        double smoothedKeyExhaust = smoothExhaustF(rawExhKey);
+        ui_handleKey(k, smoothedKeyExhaust, sys.fanFinal);
         uiNeedRedraw = true;
     }
 
@@ -206,6 +186,7 @@ void loop() {
     static unsigned long lastBME = 0;
     if (now - lastBME > 3000) {
         sensors_readBME280();
+        env_logic_update(now);
         lastBME = now;
     }
 
@@ -215,33 +196,30 @@ void loop() {
         lastWaterRead = now;
     }
 
+    static unsigned long lastProbeScan = 0;
+    if (now - lastProbeScan >= 60000UL) {
+        sensors_rescanWaterProbes();
+        lastProbeScan = now;
+    }
+
     // 2) Burn engine – exhaust pipeline
     double rawExh = exhaust_readF_cached();
     sys.exhaustRawF = rawExh;                    // live raw flue temp for Guardian
-    smoothExh = (int16_t)smoothExhaustF(rawExh);
-    sys.exhaustSmoothF = smoothExh;             // live smoothed flue temp for control
+    double smoothedExh = smoothExhaustF(rawExh);
+    sys.exhaustSmoothF = smoothedExh;            // preserve float precision for control
 
     int demand = burnengine_compute();
+    sys.fanDemand = demand;
 
     // 3) Fan control (single source of truth)
     int fanPercent = fancontrol_apply(demand);
-    lastFanPercent = fanPercent;
 
     int pwm = map(fanPercent, 0, 100, 0, 255);
     analogWrite(PIN_FAN_PWM, pwm);
 
     // 4) Update SystemData snapshot for UI / WiFi / MQTT
 
-    // Minimal shims: keep these globals in sync for any legacy users
-    controlMode       = sys.controlMode;
-    tankLowSetpointF  = sys.tankLowSetpointF;
-    tankHighSetpointF = sys.tankHighSetpointF;
-
     sys.fanFinal = fanPercent;
-
-    // Mirror from sys → legacy globals (never the other way)
-    burnState   = sys.burnState;
-    safetyState = sys.safetyState;
 
     sys.uptimeMs = now;
 
@@ -252,7 +230,7 @@ void loop() {
     }
 
     // 6) UI
-    ui_showScreen(uiState, smoothExh, fanPercent);
+    ui_showScreen(uiState, sys.exhaustSmoothF, fanPercent);
 
     // 7) Provisioning AP handler
     wifi_prov_loop();

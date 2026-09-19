@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – UI API (v3.0 "Total Domination")
+ *  Boiler Assistant – UI API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.h
  *  Author: The Architect Collective
@@ -21,7 +21,7 @@
  *      - Rendering is strictly operator‑facing and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 

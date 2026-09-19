@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – LoRa Telemetry API (v3.0 "Total Domination")
+ *  Boiler Assistant – LoRa Telemetry API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: LoRaRadio.h
  *  Author: The Architect Collective
@@ -28,7 +28,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 

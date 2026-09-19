@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – LoRa Telemetry Module (v3.0 "Total Domination")
+ *  Boiler Assistant – LoRa Telemetry Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: LoRaRadio.cpp
  *  Author: The Architect Collective
@@ -46,7 +46,7 @@
  *      - No UI, EEPROM, or burn logic lives here
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -55,6 +55,8 @@
 #include "EnvironmentalLogic.h"  
 #include "SystemData.h"           
 #include "LoRaRadio.h"
+#include "EEPROMStorage.h"
+#include "ConfigValidation.h"
 #include <LoRa.h>
 
 
@@ -103,8 +105,12 @@ void lora_loop() {
     int packetSize = LoRa.parsePacket();
     if (packetSize > 0) {
         uint8_t buf[32];
+        if (packetSize > (int)sizeof(buf)) {
+            while (LoRa.available()) LoRa.read();
+            return;
+        }
         int len = LoRa.readBytes(buf, packetSize);
-        if (len >= 4) lora_handleCommand(buf, len);
+        if (len == 4) lora_handleCommand(buf, len);
     }
 
     // Transmit telemetry every 2 seconds
@@ -169,14 +175,46 @@ static void lora_handleCommand(uint8_t* pkt, uint8_t len) {
     uint16_t value = (pkt[1] << 8) | pkt[2];
 
     switch (cmd) {
-        case 0x01: sys.exhaustSetpoint       = value; break;
-        case 0x02: sys.deadbandF             = value; break;
-        case 0x03: sys.clampMinPercent       = value; break;
-        case 0x04: sys.clampMaxPercent       = value; break;
-        case 0x05: sys.boostTimeSeconds      = value; break;
-        case 0x06: sys.emberGuardianTimerMinutes = value; break;
-        case 0x07: sys.flueLowThreshold      = value; break;
-        case 0x08: sys.flueRecoveryThreshold = value; break;
+        case 0x01:
+            if (!validExhaustSetpoint(value)) return;
+            sys.exhaustSetpoint = value;
+            eeprom_saveSetpoint(value);
+            break;
+        case 0x02:
+            if (!validDeadband(value)) return;
+            sys.deadbandF = value;
+            eeprom_saveDeadband(value);
+            break;
+        case 0x03:
+            if (!validFanClamp(value) || value > sys.clampMaxPercent) return;
+            sys.clampMinPercent = value;
+            eeprom_saveClampMin(value);
+            break;
+        case 0x04:
+            if (!validFanClamp(value) || value < sys.clampMinPercent) return;
+            sys.clampMaxPercent = value;
+            eeprom_saveClampMax(value);
+            break;
+        case 0x05:
+            if (!validBoostTime(value)) return;
+            sys.boostTimeSeconds = value;
+            eeprom_saveBoostTime(value);
+            break;
+        case 0x06:
+            if (!validGuardianMinutes(value)) return;
+            sys.emberGuardianTimerMinutes = value;
+            eeprom_saveEmberGuardianMinutes(value);
+            break;
+        case 0x07:
+            if (!validFlueThreshold(value) || value > sys.flueRecoveryThreshold) return;
+            sys.flueLowThreshold = value;
+            eeprom_saveFlueLow(value);
+            break;
+        case 0x08:
+            if (!validFlueThreshold(value) || value < sys.flueLowThreshold) return;
+            sys.flueRecoveryThreshold = value;
+            eeprom_saveFlueRecovery(value);
+            break;
         default: return;
     }
 

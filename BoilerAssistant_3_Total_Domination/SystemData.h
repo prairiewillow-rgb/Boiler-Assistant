@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System Data API (v3.0 "Total Domination")
+ *  Boiler Assistant – System Data API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.h
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - All modules must treat SystemData as authoritative.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -47,15 +47,19 @@ struct SystemData
      * ------------------------------ */
     uint8_t waterProbeCount;
     float   waterTempF[MAX_WATER_PROBES];
+    unsigned long waterTempLastGoodMs[MAX_WATER_PROBES];
     uint8_t probeRoleMap[PROBE_ROLE_COUNT];
+    char    waterProbeNames[MAX_WATER_PROBES][PROBE_NAME_LENGTH];
 
     /* ------------------------------
      *  EXHAUST SENSOR
      * ------------------------------ */
     bool  exhaustSensorOK;
+    unsigned long exhaustLastGoodMs;
     float exhaustSmoothF;
     float exhaustRawF;        // raw flue temp for Guardian
     int   exhaustSetpoint;
+    bool  exhaustFallbackActive;
 
     /* ------------------------------
      *  FAN CONTROL
@@ -64,6 +68,7 @@ struct SystemData
     int clampMaxPercent;
     int deadbandF;
     uint8_t deadzoneFanMode;  // 0 = fan ON in band, 1 = fan OFF in band
+    int fanDemand;
 
     /* ------------------------------
      *  BOOST
@@ -76,6 +81,7 @@ struct SystemData
      *  SAFETY
      * ------------------------------ */
     SafetyState safetyState;
+    uint8_t sensorFaultMask;
 
     /* ------------------------------
      *  BURN ENGINE
@@ -157,11 +163,12 @@ struct SystemData
     uint32_t envModeLockoutSec;
 
     /* ------------------------------
-     *  ACTIVE ENVIRONMENT STATE (v3.0)
+    *  ACTIVE ENVIRONMENT STATE (v3.1)
      * ------------------------------ */
 
     // Active season selection
     EnvSeason envActiveSeason;
+    unsigned long envSeasonChangedMs;
 
     // Active exhaust control
     int16_t envActiveSetpointF;

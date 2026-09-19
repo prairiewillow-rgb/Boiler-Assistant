@@ -34,7 +34,7 @@
  *        - Fan output uses a PWM‑capable pin on UNO R4.
  *
  *  Version:
- *      Boiler Assistant v2.3
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -79,6 +79,6 @@
 #define PIN_TC1_CS         D7   // CS (Chip Select) – Exhaust probe
 #define PIN_TC2_CS         D3
 #define PIN_TC3_CS         D4
-#define PIN_TC4_CS         D5
+#define PIN_TC4_CS         D2   // Keep separate from fan PWM on D5
 
 #endif

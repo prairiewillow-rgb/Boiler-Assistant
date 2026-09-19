@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – MQTT Client Module (v3.0 "Total Domination")
+ *  Boiler Assistant – MQTT Client Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - Reconnect logic is rate‑limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -48,6 +48,8 @@
 #include "EEPROMStorage.h"
 #include "WiFiProvisioning.h"
 #include "RuntimeCredentials.h"
+#include "ConfigValidation.h"
+#include "BurnEngine.h"
 
 #ifndef PROBE_ROLE_COUNT
 #define PROBE_ROLE_COUNT 8
@@ -70,6 +72,7 @@ static const char* TOPIC_STATE    = "boiler/state";
 static const char* TOPIC_SETTINGS = "boiler/settings";
 static const char* TOPIC_WATER    = "boiler/water";
 static const char* TOPIC_OUTDOOR  = "boiler/outdoor";
+static const char* TOPIC_ALERT    = "boiler/alert";
 
 static const char* HA_DISCOVERY_PREFIX = "homeassistant";
 static const char* HA_DEVICE_ID        = "boiler_assistant";
@@ -88,12 +91,20 @@ static unsigned long lastWaterMs          = 0;
 static unsigned long lastSettingsMs       = 0;
 static unsigned long lastOutdoorBmeMs     = 0;
 static unsigned long lastReconnectAttempt = 0;
+static bool mqttAuthConfigured = false;
+static bool lastHighTemp = false;
+static bool lastTankFault = false;
+static bool lastExhaustFallback = false;
+static bool lastGuardian = false;
 
 // Forward declarations
 static void mqtt_publishState();
 static void mqtt_publishSettings();
 static void mqtt_publishWater();
 static void mqtt_publishOutdoor();
+static void mqtt_publishAlert(const char* code, const char* message,
+                              bool active);
+static void mqtt_publishAlertTransitions();
 static void mqtt_onMessage(int messageSize);
 static void mqtt_reconnect();
 static void publishDiscovery();
@@ -124,6 +135,18 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 // ============================================================
 
 void mqtt_init() {
+    mqttAuthConfigured = prov_mqtt_server != nullptr &&
+                         prov_mqtt_server[0] != '\0' &&
+                         prov_mqtt_user != nullptr &&
+                         prov_mqtt_user[0] != '\0' &&
+                         prov_mqtt_pass != nullptr &&
+                         prov_mqtt_pass[0] != '\0';
+
+    if (!mqttAuthConfigured) {
+        Serial.println("MQTT: disabled because broker authentication is not configured");
+        return;
+    }
+
     mqtt.setId(MQTT_CLIENT_ID);
     mqtt.setUsernamePassword(prov_mqtt_user, prov_mqtt_pass);
     mqtt.setKeepAliveInterval(15);
@@ -136,6 +159,7 @@ void mqtt_init() {
 
 void mqtt_loop() {
     if (wifi_prov_isAPMode()) return;
+    if (!mqttAuthConfigured) return;
     if (!sys.wifiOK) return;
     if (WiFi.status() != WL_CONNECTED) return;
 
@@ -155,6 +179,8 @@ void mqtt_loop() {
         mqtt_publishState();
         lastStateFastMs = now;
     }
+
+    mqtt_publishAlertTransitions();
 
     if (now - lastStateSlowMs > 30000) {
         mqtt_publishState();
@@ -197,11 +223,33 @@ static void mqtt_reconnect() {
 // ============================================================
 
 static void mqtt_publishState() {
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<1536> doc;
 
-    doc["exhaust"]    = sys.exhaustSmoothF;
-    doc["fan"]        = sys.fanFinal;
-    doc["fan_final"]  = sys.fanFinal;
+    float tankTemp = NAN;
+    bool tankSensorOK = false;
+    if (sys.waterProbeCount > 0) {
+        uint8_t tankProbe = sys.probeRoleMap[PROBE_TANK];
+        if (tankProbe < sys.waterProbeCount) {
+            tankTemp = sys.waterTempF[tankProbe];
+            tankSensorOK = !isnan(tankTemp) &&
+                           millis() - sys.waterTempLastGoodMs[tankProbe] <= 3000UL;
+        }
+    }
+
+    doc["exhaust"]        = sys.exhaustSmoothF;
+    doc["exhaust_smooth"] = sys.exhaustSmoothF;
+    doc["exhaust_raw"]    = sys.exhaustRawF;
+    doc["exhaust_fallback"] = sys.exhaustFallbackActive;
+    doc["exhaust_alert"] = sys.exhaustFallbackActive
+                                ? "EXHAUST SENSOR NEEDS REPLACEMENT - FAN 100% FALLBACK"
+                                : "";
+    doc["tank_temp"]      = tankTemp;
+    doc["tank_sensor_ok"] = tankSensorOK;
+    doc["fan"]            = sys.fanFinal;
+    doc["fan_demand"]     = sys.fanDemand;
+    doc["fan_final"]      = sys.fanFinal;
+    doc["fan_pwm_percent"] = sys.fanFinal;
+    doc["adaptive_slope"] = burnengine_getAdaptiveSlope();
     doc["state"]      = sys.burnState;
     doc["rssi"]       = WiFi.RSSI();
 
@@ -260,6 +308,62 @@ static void mqtt_publishState() {
     mqtt.endMessage();
 }
 
+static void mqtt_publishAlert(const char* code, const char* message,
+                              bool active)
+{
+    StaticJsonDocument<256> doc;
+    doc["active"] = active;
+    doc["code"] = code;
+    doc["message"] = message;
+    doc["timestamp_ms"] = millis();
+
+    char buf[256];
+    size_t n = serializeJson(doc, buf);
+    mqtt.beginMessage(TOPIC_ALERT);
+    mqtt.write((const uint8_t*)buf, n);
+    mqtt.endMessage();
+}
+
+static void mqtt_publishAlertTransitions()
+{
+    bool highTemp = sys.safetyState == SAFETY_HIGHTEMP;
+    bool tankFault = sys.safetyState == SAFETY_SENSOR_FAULT &&
+                     (sys.sensorFaultMask & SENSOR_FAULT_TANK) != 0;
+    bool exhaustFallback = sys.exhaustFallbackActive;
+    bool guardian = sys.emberGuardianLatched ||
+                    sys.burnState == BURN_EMBER_GUARD;
+
+    if (highTemp != lastHighTemp) {
+        mqtt_publishAlert("HIGH_TEMP",
+                          highTemp ? "HIGH TEMPERATURE LOCKOUT" :
+                                     "HIGH TEMPERATURE CLEARED",
+                          highTemp);
+        lastHighTemp = highTemp;
+    }
+    if (tankFault != lastTankFault) {
+        mqtt_publishAlert("TANK_PROBE_FAULT",
+                          tankFault ? "TANK PROBE FAULT - SYSTEM STOPPED" :
+                                      "TANK PROBE FAULT CLEARED",
+                          tankFault);
+        lastTankFault = tankFault;
+    }
+    if (exhaustFallback != lastExhaustFallback) {
+        mqtt_publishAlert("EXHAUST_PROBE_FAULT",
+                          exhaustFallback ?
+                              "EXHAUST PROBE FAULT - FAN 100% FALLBACK" :
+                              "EXHAUST PROBE FAULT CLEARED",
+                          exhaustFallback);
+        lastExhaustFallback = exhaustFallback;
+    }
+    if (guardian != lastGuardian) {
+        mqtt_publishAlert("EMBER_GUARDIAN",
+                          guardian ? "EMBER GUARDIAN ACTIVE" :
+                                     "EMBER GUARDIAN CLEARED",
+                          guardian);
+        lastGuardian = guardian;
+    }
+}
+
 static void mqtt_publishSettings() {
     StaticJsonDocument<1024> doc;
 
@@ -305,11 +409,17 @@ static void mqtt_publishSettings() {
 }
 
 static void mqtt_publishWater() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<768> doc;
 
     JsonArray arr = doc.createNestedArray("water");
-    for (uint8_t i = 0; i < sys.waterProbeCount; i++)
-        arr.add(sys.waterTempF[i]);
+    for (uint8_t i = 0; i < sys.waterProbeCount; i++) {
+        JsonObject probe = arr.createNestedObject();
+        probe["index"] = i;
+        probe["name"] = sys.waterProbeNames[i];
+        probe["temp_f"] = sys.waterTempF[i];
+        probe["sensor_ok"] = millis() - sys.waterTempLastGoodMs[i] <= 3000UL;
+        probe["controls_tank"] = sys.probeRoleMap[PROBE_TANK] == i;
+    }
 
     doc["count"] = sys.waterProbeCount;
 
@@ -479,7 +589,7 @@ static void publishDiscovery() {
                            "boiler/cmd/extreme_setpoint", TOPIC_SETTINGS,
                            "°F", 200, 900, 1);
 
-    // v3.0 Boiler Control discovery
+    // v3.1 Boiler Control discovery
     publishDiscoveryNumber("tank_low", "Tank Low Setpoint",
                            "boiler/cmd/tank_low", TOPIC_SETTINGS,
                            "°F", 80, 190, 1, nullptr, "mdi:water-boiler");
@@ -488,9 +598,6 @@ static void publishDiscovery() {
                            "boiler/cmd/tank_high", TOPIC_SETTINGS,
                            "°F", 80, 190, 1, nullptr, "mdi:water-boiler");
 
-    publishDiscoveryNumber("control_mode", "Control Mode",
-                           "boiler/cmd/control_mode", TOPIC_SETTINGS,
-                           "", 0, 1, 1, nullptr, "mdi:toggle-switch");
 }
 
 /* ============================================================
@@ -648,6 +755,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/setpoint")) {
         int v = val.as<int>();
+        if (!validExhaustSetpoint(v)) return;
         eeprom_saveSetpoint(v);
         sys.exhaustSetpoint = v;
         return;
@@ -655,6 +763,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/boost")) {
         int v = val.as<int>();
+        if (!validBoostTime(v)) return;
         eeprom_saveBoostTime(v);
         sys.boostTimeSeconds = v;
         return;
@@ -662,6 +771,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/deadband")) {
         int v = val.as<int>();
+        if (!validDeadband(v)) return;
         eeprom_saveDeadband(v);
         sys.deadbandF = v;
         return;
@@ -669,6 +779,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/clamp_min")) {
         int v = val.as<int>();
+        if (!validFanClamp(v) || v > sys.clampMaxPercent) return;
         eeprom_saveClampMin(v);
         sys.clampMinPercent = v;
         return;
@@ -676,6 +787,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/clamp_max")) {
         int v = val.as<int>();
+        if (!validFanClamp(v) || v < sys.clampMinPercent) return;
         eeprom_saveClampMax(v);
         sys.clampMaxPercent = v;
         return;
@@ -690,6 +802,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/ember")) {
         int v = val.as<int>();
+        if (!validGuardianMinutes(v)) return;
         eeprom_saveEmberGuardianMinutes(v);
         sys.emberGuardianTimerMinutes = v;
         return;
@@ -697,6 +810,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/flue_low")) {
         int v = val.as<int>();
+        if (!validFlueThreshold(v) || v > sys.flueRecoveryThreshold) return;
         eeprom_saveFlueLow(v);
         sys.flueLowThreshold = v;
         return;
@@ -704,6 +818,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/flue_rec")) {
         int v = val.as<int>();
+        if (!validFlueThreshold(v) || v < sys.flueLowThreshold) return;
         eeprom_saveFlueRecovery(v);
         sys.flueRecoveryThreshold = v;
         return;
@@ -713,6 +828,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/season_mode")) {
         int mode = val.as<int>();
+        if (mode < 0 || mode > 2) return;
         eeprom_saveEnvSeasonMode(mode);
         sys.envSeasonMode = mode;
         return;
@@ -727,6 +843,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/lockout")) {
         int hr = val.as<int>();
+        if (!validLockoutHours(hr)) return;
         eeprom_saveEnvLockoutHours(hr);
         sys.envModeLockoutSec = (uint32_t)hr * 3600UL;
         return;
@@ -734,6 +851,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/summer_start")) {
         int v = val.as<int>();
+        if (!validSeasonStart(v)) return;
         sys.envSummerStartF = v;
         eeprom_saveEnvSeasonStarts();
         return;
@@ -741,6 +859,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/spf_start")) {
         int v = val.as<int>();
+        if (!validSeasonStart(v)) return;
         sys.envSpringFallStartF = v;
         eeprom_saveEnvSeasonStarts();
         return;
@@ -748,6 +867,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/winter_start")) {
         int v = val.as<int>();
+        if (!validSeasonStart(v)) return;
         sys.envWinterStartF = v;
         eeprom_saveEnvSeasonStarts();
         return;
@@ -755,6 +875,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/extreme_start")) {
         int v = val.as<int>();
+        if (!validSeasonStart(v)) return;
         sys.envExtremeStartF = v;
         eeprom_saveEnvSeasonStarts();
         return;
@@ -762,6 +883,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/summer_buffer")) {
         int v = val.as<int>();
+        if (!validSeasonHysteresis(v)) return;
         sys.envHystSummerF = v;
         eeprom_saveEnvSeasonHyst();
         return;
@@ -769,6 +891,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/spf_buffer")) {
         int v = val.as<int>();
+        if (!validSeasonHysteresis(v)) return;
         sys.envHystSpringFallF = v;
         eeprom_saveEnvSeasonHyst();
         return;
@@ -776,6 +899,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/winter_buffer")) {
         int v = val.as<int>();
+        if (!validSeasonHysteresis(v)) return;
         sys.envHystWinterF = v;
         eeprom_saveEnvSeasonHyst();
         return;
@@ -783,6 +907,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/extreme_buffer")) {
         int v = val.as<int>();
+        if (!validSeasonHysteresis(v)) return;
         sys.envHystExtremeF = v;
         eeprom_saveEnvSeasonHyst();
         return;
@@ -790,6 +915,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/summer_setpoint")) {
         int v = val.as<int>();
+        if (!validExhaustSetpoint(v)) return;
         sys.envSetpointSummerF = v;
         eeprom_saveEnvSeasonSetpoints();
         return;
@@ -797,6 +923,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/spf_setpoint")) {
         int v = val.as<int>();
+        if (!validExhaustSetpoint(v)) return;
         sys.envSetpointSpringFallF = v;
         eeprom_saveEnvSeasonSetpoints();
         return;
@@ -804,6 +931,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/winter_setpoint")) {
         int v = val.as<int>();
+        if (!validExhaustSetpoint(v)) return;
         sys.envSetpointWinterF = v;
         eeprom_saveEnvSeasonSetpoints();
         return;
@@ -811,6 +939,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/extreme_setpoint")) {
         int v = val.as<int>();
+        if (!validExhaustSetpoint(v)) return;
         sys.envSetpointExtremeF = v;
         eeprom_saveEnvSeasonSetpoints();
         return;
@@ -837,6 +966,7 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/tank_low")) {
         int v = val.as<int>();
+        if (!validTankSetpoint(v) || v >= sys.tankHighSetpointF) return;
         sys.tankLowSetpointF = v;
         eeprom_saveTankLow(v);
         return;
@@ -844,17 +974,9 @@ static void handleCommandTopic(const String& topic, StaticJsonDocument<256>& doc
 
     if (topic.endsWith("/tank_high")) {
         int v = val.as<int>();
+        if (!validTankSetpoint(v) || v <= sys.tankLowSetpointF) return;
         sys.tankHighSetpointF = v;
         eeprom_saveTankHigh(v);
-        return;
-    }
-
-    if (topic.endsWith("/control_mode")) {
-        int mode = val.as<int>();
-        if (mode < 0) mode = 0;
-        if (mode > 1) mode = 1;
-        sys.controlMode = (RunMode)mode;
-        eeprom_saveRunMode((uint8_t)mode);
         return;
     }
 

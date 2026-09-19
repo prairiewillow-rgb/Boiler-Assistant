@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Sensor Module (v3.0 "Total Domination")
+ *  Boiler Assistant – Sensor Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI, MQTT, or EEPROM logic
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -55,6 +55,8 @@ extern SystemData sys;
 static OneWire oneWire(PIN_DS18B20_DATA);
 static DallasTemperature waterSensors(&oneWire);
 static DeviceAddress probeAddr[MAX_WATER_PROBES];
+static DeviceAddress tankProbeAddress;
+static bool tankProbeAddressValid = false;
 
 // BME280
 static Adafruit_BME280 bme;
@@ -83,11 +85,14 @@ double exhaust_readF_cached() {
     double c = max31855.readCelsius();
 
     if (isnan(c)) {
-        sys.exhaustSensorOK = false;
+        // Hold the last good value through brief bus/thermocouple glitches.
+        sys.exhaustSensorOK = !isnan(lastExhaustF) &&
+                              now - sys.exhaustLastGoodMs <= 1000UL;
         return lastExhaustF;
     }
 
     sys.exhaustSensorOK = true;
+    sys.exhaustLastGoodMs = now;
 
     lastExhaustF = c * 9.0 / 5.0 + 32.0;
     return lastExhaustF;
@@ -98,17 +103,68 @@ double exhaust_readF_cached() {
  * ============================================================ */
 
 void scanWaterProbes() {
+    DeviceAddress oldAddr[MAX_WATER_PROBES];
+    char oldNames[MAX_WATER_PROBES][PROBE_NAME_LENGTH];
+    uint8_t oldCount = sys.waterProbeCount;
+    for (uint8_t i = 0; i < oldCount && i < MAX_WATER_PROBES; i++) {
+        memcpy(oldAddr[i], probeAddr[i], 8);
+        memcpy(oldNames[i], sys.waterProbeNames[i], PROBE_NAME_LENGTH);
+    }
+
+    if (!tankProbeAddressValid && sys.probeRoleMap[PROBE_TANK] < oldCount) {
+        memcpy(tankProbeAddress,
+               oldAddr[sys.probeRoleMap[PROBE_TANK]], 8);
+        tankProbeAddressValid = true;
+    }
+
+    DeviceAddress found[MAX_WATER_PROBES];
+    uint8_t foundCount = 0;
     sys.waterProbeCount = 0;
     oneWire.reset_search();
 
     DeviceAddress addr;
 
     while (oneWire.search(addr)) {
-        if (sys.waterProbeCount < MAX_WATER_PROBES) {
-            memcpy(probeAddr[sys.waterProbeCount], addr, 8);
-            sys.waterProbeCount++;
+        if (foundCount < MAX_WATER_PROBES) {
+            memcpy(found[foundCount], addr, 8);
+            foundCount++;
         }
     }
+
+    for (uint8_t i = 0; i < foundCount; i++) {
+        memcpy(probeAddr[i], found[i], 8);
+        bool wasKnown = false;
+        for (uint8_t old = 0; old < oldCount; old++) {
+            if (memcmp(found[i], oldAddr[old], 8) == 0) {
+                memcpy(sys.waterProbeNames[i], oldNames[old], PROBE_NAME_LENGTH);
+                wasKnown = true;
+                break;
+            }
+        }
+        if (!wasKnown && oldCount != 0) {
+            snprintf(sys.waterProbeNames[i], PROBE_NAME_LENGTH,
+                     "Probe %u", i + 1);
+        }
+    }
+    sys.waterProbeCount = foundCount;
+
+    if (tankProbeAddressValid) {
+        sys.probeRoleMap[PROBE_TANK] = MAX_WATER_PROBES;
+        for (uint8_t i = 0; i < foundCount; i++) {
+            if (memcmp(probeAddr[i], tankProbeAddress, 8) == 0) {
+                sys.probeRoleMap[PROBE_TANK] = i;
+                break;
+            }
+        }
+    }
+
+    for (uint8_t i = 0; i < sys.waterProbeCount; i++) {
+        waterSensors.setResolution(probeAddr[i], 9);
+    }
+}
+
+void sensors_rescanWaterProbes() {
+    scanWaterProbes();
 }
 
 /* ============================================================
@@ -119,6 +175,7 @@ void sensors_readWaterProbes() {
     if (sys.waterProbeCount == 0) return;
 
     waterSensors.requestTemperatures();
+    unsigned long now = millis();
 
     for (uint8_t i = 0; i < sys.waterProbeCount; i++) {
         float c = waterSensors.getTempC(probeAddr[i]);
@@ -131,6 +188,8 @@ void sensors_readWaterProbes() {
             } else {
                 sys.waterTempF[i] = sys.waterTempF[i] * 0.8f + newF * 0.2f;
             }
+
+            sys.waterTempLastGoodMs[i] = now;
         }
     }
 }
@@ -166,29 +225,6 @@ bool sensors_init() {
 
     scanWaterProbes();
 
-    for (uint8_t i = 0; i < sys.waterProbeCount; i++) {
-        waterSensors.setResolution(probeAddr[i], 9);
-    }
-
     return ok;
 }
 
-/* ============================================================
- *  READ ALL
- * ============================================================ */
-
-void sensors_readAll() {
-    double rawF = exhaust_readF_cached();
-
-    // v3.x exhaust smoothing
-    sys.exhaustRawF = rawF;
-
-    static double last = NAN;
-    if (isnan(last)) last = rawF;
-    last = (last * 0.90) + (rawF * 0.10);
-
-    sys.exhaustSmoothF = last;
-
-    sensors_readWaterProbes();
-    sensors_readBME280();
-}

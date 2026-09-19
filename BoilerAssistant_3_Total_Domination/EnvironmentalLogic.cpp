@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Environmental Logic Module (v3.0 "Total Domination")
+ *  Boiler Assistant – Environmental Logic Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *        main loop to maintain seasonal correctness.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -43,23 +43,49 @@ extern SystemData sys;
 /* ============================================================
  *  DETERMINE ACTIVE SEASON
  * ============================================================ */
+static EnvSeason classifySeason(float temperatureF)
+{
+    if (temperatureF <= sys.envExtremeStartF) return ENV_SEASON_EXTREME;
+    if (temperatureF <= sys.envWinterStartF) return ENV_SEASON_WINTER;
+    if (temperatureF <= sys.envSpringFallStartF) return ENV_SEASON_SPRING_FALL;
+    return ENV_SEASON_SUMMER;
+}
+
 static EnvSeason determineSeason()
 {
-    if (!sys.envSensorOK)
-        return ENV_SEASON_SUMMER; // safe fallback
+    if (!sys.envSensorOK || isnan(sys.envTempF)) {
+        return sys.envActiveSeason == ENV_SEASON_NONE
+            ? ENV_SEASON_SUMMER
+            : sys.envActiveSeason;
+    }
 
-    float t = sys.envTempF;
+    float temperatureF = sys.envTempF;
+    if (sys.envActiveSeason == ENV_SEASON_NONE) {
+        return classifySeason(temperatureF);
+    }
 
-    if (t <= sys.envExtremeStartF)
-        return ENV_SEASON_EXTREME;
-
-    if (t <= sys.envWinterStartF)
-        return ENV_SEASON_WINTER;
-
-    if (t <= sys.envSpringFallStartF)
-        return ENV_SEASON_SPRING_FALL;
-
-    return ENV_SEASON_SUMMER;
+    switch (sys.envActiveSeason) {
+        case ENV_SEASON_SUMMER:
+            return temperatureF <= sys.envSpringFallStartF - sys.envHystSpringFallF
+                ? ENV_SEASON_SPRING_FALL : ENV_SEASON_SUMMER;
+        case ENV_SEASON_SPRING_FALL:
+            if (temperatureF > sys.envSpringFallStartF + sys.envHystSummerF)
+                return ENV_SEASON_SUMMER;
+            if (temperatureF <= sys.envWinterStartF - sys.envHystWinterF)
+                return ENV_SEASON_WINTER;
+            return ENV_SEASON_SPRING_FALL;
+        case ENV_SEASON_WINTER:
+            if (temperatureF > sys.envWinterStartF + sys.envHystSpringFallF)
+                return ENV_SEASON_SPRING_FALL;
+            if (temperatureF <= sys.envExtremeStartF - sys.envHystExtremeF)
+                return ENV_SEASON_EXTREME;
+            return ENV_SEASON_WINTER;
+        case ENV_SEASON_EXTREME:
+            return temperatureF > sys.envExtremeStartF + sys.envHystWinterF
+                ? ENV_SEASON_WINTER : ENV_SEASON_EXTREME;
+        default:
+            return classifySeason(temperatureF);
+    }
 }
 
 /* ============================================================
@@ -67,8 +93,7 @@ static EnvSeason determineSeason()
  * ============================================================ */
 static void applySeasonalOverrides(EnvSeason s)
 {
-    if (!sys.envAutoSeasonEnabled)
-        return;
+    if (sys.envAutoSeasonEnabled) {
 
     /* Exhaust Setpoint */
     switch (s) {
@@ -112,6 +137,13 @@ static void applySeasonalOverrides(EnvSeason s)
             sys.clampMaxPercent   = sys.envClampMaxExtremePercent;
             break;
     }
+
+    }
+
+    sys.envActiveSetpointF = sys.exhaustSetpoint;
+    sys.envActiveClampPercent = sys.clampMaxPercent;
+    sys.envActiveTankHighF = sys.tankHighSetpointF;
+    sys.envActiveTankLowF = sys.tankLowSetpointF;
 }
 
 /* ============================================================
@@ -125,17 +157,26 @@ void env_logic_init()
 
     // Store active season for UI
     sys.envActiveSeason = s;
+    sys.envSeasonChangedMs = millis();
 }
 
 /* ============================================================
  *  PUBLIC: UPDATE ENVIRONMENTAL LOGIC
  * ============================================================ */
-void environmentalLogic_update()
+void env_logic_update(unsigned long nowMs)
 {
-    EnvSeason s = determineSeason();
+    EnvSeason candidate = determineSeason();
 
-    applySeasonalOverrides(s);
+    if (candidate != sys.envActiveSeason) {
+        unsigned long lockoutMs = (unsigned long)sys.envModeLockoutSec * 1000UL;
+        bool lockoutActive = sys.envModeLockoutSec > 0 &&
+                             nowMs - sys.envSeasonChangedMs < lockoutMs;
 
-    // Update active season for UI
-    sys.envActiveSeason = s;
+        if (!lockoutActive) {
+            sys.envActiveSeason = candidate;
+            sys.envSeasonChangedMs = nowMs;
+        }
+    }
+
+    applySeasonalOverrides(sys.envActiveSeason);
 }

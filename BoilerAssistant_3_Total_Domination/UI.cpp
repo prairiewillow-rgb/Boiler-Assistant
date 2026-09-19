@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – UI Module (v3.0 "Total Domination")
+ *  Boiler Assistant – UI Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -73,6 +73,8 @@ extern void eeprom_saveBoostTime(int v);
 extern void eeprom_saveEnvSeasonStarts();
 extern void eeprom_saveEnvSeasonHyst();
 extern void eeprom_saveEnvSeasonSetpoints();
+extern void eeprom_saveEnvSeasonTankValues();
+extern void eeprom_saveEnvSeasonClampValues();
 extern void eeprom_saveEnvSeasonMode(uint8_t mode);
 extern void eeprom_saveEnvAutoSeason(bool en);
 extern void eeprom_saveEnvLockoutHours(uint8_t hours);
@@ -86,11 +88,11 @@ extern void eeprom_saveTankHigh(int16_t v);
 // Unified redraw flag
 #define uiNeedRedraw sys.uiNeedsRefresh
 
-extern bool emberGuardianTimerActive;
 extern UIState uiState;
 
 // BurnEngine hook
 extern void burnengine_startBoost();
+extern void burnengine_resetSensorFault();
 
 /* ============================================================
  *  EDIT BUFFERS
@@ -131,14 +133,14 @@ static const char* envSeasonLongName(EnvSeason s) {
  *  PROBE ROLE NAMES
  * ============================================================ */
 static const char* roleNames[] = {
-    "TANK",
+    "MAIN TANK",
     "L1 SUPPLY",
     "L1 RETURN",
     "L2 SUPPLY",
     "L2 RETURN",
-    "L3 SUPPLY",
-    "L3 RETURN",
-    "SPARE 1"
+    "TANK BOTTOM",
+    "TANK TOP",
+    "EXTRA"
 };
 
 /* ============================================================
@@ -176,6 +178,25 @@ static void ui_showSafetyLockout(int tankF)
     char line2[21];
     snprintf(line2, 21, " TANK TEMP: %3dF", tankF);
 
+    if (sys.safetyState == SAFETY_SENSOR_FAULT) {
+        const char* faultLine = " SENSOR UNKNOWN     ";
+        if (sys.sensorFaultMask == SENSOR_FAULT_EXHAUST) {
+            faultLine = " EXHAUST SENSOR BAD ";
+        } else if (sys.sensorFaultMask == SENSOR_FAULT_TANK) {
+            faultLine = " TANK SENSOR BAD    ";
+        } else if (sys.sensorFaultMask == (SENSOR_FAULT_EXHAUST | SENSOR_FAULT_TANK)) {
+            faultLine = " BOTH SENSORS BAD   ";
+        }
+
+        lcd4(
+            " SENSOR FAULT LOCK ",
+            faultLine,
+            " SYSTEM STOPPED    ",
+            " PRESS * TO RESET  "
+        );
+        return;
+    }
+
     lcd4(
         " HIGH TEMP LOCKOUT ",
         line2,
@@ -184,10 +205,37 @@ static void ui_showSafetyLockout(int tankF)
     );
 }
 
+static void ui_showExhaustFallback()
+{
+    lcd4(
+        " EXHAUST PROBE BAD ",
+        " SYSTEM DEFAULT    ",
+        " FAN RUNNING 100%  ",
+        " PRESS * TO RESET  "
+    );
+}
+
 /* ============================================================
  *  BOOT SCREEN
  * ============================================================ */
+static void ui_centerName(char* line)
+{
+    const char* name = runtimeCreds.displayName;
+    size_t length = 0;
+    while (length < 20 && name[length] >= 32 && name[length] <= 126) {
+        length++;
+    }
+
+    memset(line, ' ', 20);
+    line[20] = '\0';
+    size_t start = (20 - length) / 2;
+    memcpy(line + start, name, length);
+}
+
 static void showBootScreen() {
+    char nameLine[21];
+    ui_centerName(nameLine);
+
     lcdRef->clear();
     lcdRef->setCursor(0, 0); lcdRef->print("  BOILER ASSISTANT  ");
     delay(300);
@@ -215,10 +263,11 @@ static void showBootScreen() {
     delay(800);
 
     lcdRef->clear();
-    lcdRef->setCursor(0, 0); lcdRef->print("      LOADING       ");
-    lcdRef->setCursor(0, 1); lcdRef->print("LOGIC, WiFi, SENSORS");
-    lcdRef->setCursor(0, 2); lcdRef->print("  PREPARING SYSTEM  ");
-    lcdRef->setCursor(0, 3); lcdRef->print("        V3.0        ");
+    lcdRef->setCursor(0, 0); lcdRef->print("      WELCOME       ");
+    lcdRef->setCursor(0, 1); lcdRef->print("                    ");
+    lcdRef->setCursor(0, 1); lcdRef->print(nameLine);
+    lcdRef->setCursor(0, 2); lcdRef->print("  LOADING SYSTEMS   ");
+    lcdRef->setCursor(0, 3); lcdRef->print("        V3.1        ");
     delay(700);
 }
 
@@ -260,8 +309,13 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
 
     int tankF = (int)(sys.waterTempF[tankIndex] + 0.5);
 
-    if (sys.safetyState == SAFETY_HIGHTEMP) {
+    if (sys.safetyState != SAFETY_OK) {
         ui_showSafetyLockout(tankF);
+        return;
+    }
+
+    if (sys.exhaustFallbackActive) {
+        ui_showExhaustFallback();
         return;
     }
 
@@ -270,8 +324,8 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
 
     double dispF = sys.exhaustSmoothF;
 
-    if (!sys.exhaustSensorOK || isnan(dispF))
-        snprintf(l2, 21, "E/CUR:ERR   W/L:%03dF", sys.tankLowSetpointF);
+    if (isnan(dispF))
+        snprintf(l2, 21, "E/CUR:---   W/L:%03dF", sys.tankLowSetpointF);
     else
         snprintf(l2, 21, "E/CUR:%3dF  W/L:%03dF",
                  (int)(dispF + 0.5), sys.tankLowSetpointF);
@@ -534,7 +588,7 @@ static void ui_showSafetyStatus() {
 
     int tankF = (int)(sys.waterTempF[tankIndex] + 0.5);
 
-    if (sys.safetyState == SAFETY_HIGHTEMP) {
+    if (sys.safetyState != SAFETY_OK) {
         snprintf(l2, 21, "STATE: LOCKOUT");
         snprintf(l3, 21, "TANK: %3dF", tankF);
         lcd4(" SAFETY STATUS     ", l2, l3, "*=RESET            ");
@@ -836,7 +890,7 @@ static void ui_showNetworkInfo() {
 static void ui_showNetFactoryResetConfirm1() {
     lcd4(
         "RESET NETWORK?    ",
-        "WIFI/MQTT/OTA     ",
+        "WIFI/MQTT         ",
         "A: YES            ",
         "B: NO             "
     );
@@ -869,19 +923,32 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
             sys.emberGuardianTimerActive = false;
             sys.emberGuardianStartMs     = 0;
 
-            sys.boostActive  = true;
-            sys.boostStartMs = millis();
-            sys.burnState    = BURN_BOOST;
+            sys.boostActive  = false;
+            sys.boostStartMs = 0;
+            sys.burnState    = BURN_IDLE;
 
             uiState = UI_HOME;
             return;
         }
     }
 
-    /* GLOBAL SAFETY LOCKOUT HANDLER */
-    if (sys.safetyState == SAFETY_HIGHTEMP) {
+    /* EXHAUST PROBE FALLBACK ACKNOWLEDGEMENT */
+    if (sys.exhaustFallbackActive) {
         if (k == '*') {
+            burnengine_resetSensorFault();
+            sys.exhaustFallbackActive = false;
+            sys.sensorFaultMask &= (uint8_t)~SENSOR_FAULT_EXHAUST;
+            uiState = UI_HOME;
+        }
+        return;
+    }
+
+    /* GLOBAL SAFETY LOCKOUT HANDLER */
+    if (sys.safetyState != SAFETY_OK) {
+        if (k == '*') {
+            burnengine_resetSensorFault();
             sys.safetyState = SAFETY_OK;
+            sys.sensorFaultMask = 0;
             sys.burnState   = BURN_IDLE;
             uiState         = UI_HOME;
         }
@@ -1240,6 +1307,7 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
                 case 'A':
                     sys.controlMode = RUNMODE_CONTINUOUS;
                     eeprom_saveRunMode(RUNMODE_CONTINUOUS);
+                    burnengine_startBoost();
                     uiState = UI_RUNMODE;
                     uiNeedRedraw = true;
                     break;
@@ -1465,7 +1533,7 @@ case UI_SEASON_EDIT_TANKHIGH:
         if (envSeasonEditValue.length()) {
             int v = envSeasonEditValue.toInt();
             *ui_getSeasonTankHighPtr(uiEditSeason) = v;
-            eeprom_saveEnvSeasonSetpoints();
+            eeprom_saveEnvSeasonTankValues();
         }
         envSeasonEditValue = "";
         uiState = UI_SEASON_DETAIL_MENU_2;
@@ -1487,7 +1555,7 @@ case UI_SEASON_EDIT_TANKLOW:
         if (envSeasonEditValue.length()) {
             int v = envSeasonEditValue.toInt();
             *ui_getSeasonTankLowPtr(uiEditSeason) = v;
-            eeprom_saveEnvSeasonSetpoints();
+            eeprom_saveEnvSeasonTankValues();
         }
         envSeasonEditValue = "";
         uiState = UI_SEASON_DETAIL_MENU_2;
@@ -1511,7 +1579,7 @@ case UI_SEASON_EDIT_CLAMPMAX:
             if (v < 0) v = 0;
             if (v > 100) v = 100;
             *ui_getSeasonClampMaxPtr(uiEditSeason) = (uint8_t)v;
-            eeprom_saveEnvSeasonSetpoints();
+            eeprom_saveEnvSeasonClampValues();
         }
         envSeasonEditValue = "";
         uiState = UI_SEASON_DETAIL_MENU_2;

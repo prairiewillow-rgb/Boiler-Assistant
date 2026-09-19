@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Fan Control Module (v3.0 "Total Domination")
+ *  Boiler Assistant – Fan Control Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - Output is always deterministic and operator‑visible.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -36,16 +36,6 @@
 #include "SystemData.h"
 #include <Arduino.h>
 
-/* ============================================================
- *  COMPATIBILITY SHIM (v2.2 → v2.3)
- * ============================================================ */
-#ifndef BURN_SAFETY
-#define BURN_SAFETY ((BurnState)99)
-#endif
-
-extern BurnState burnState;
-
-/* ============================================================
  *  INTERNAL MEMORY
  * ============================================================ */
 static int       lastFan       = 0;
@@ -54,6 +44,8 @@ static BurnState prevBurnState = BURN_IDLE;
 
 // Ramp limiter memory
 static int lastOutput = 0;
+static unsigned long fanKickUntil = 0;
+static const unsigned long FAN_START_KICK_MS = 750UL;
 
 /* ============================================================
  *  INIT
@@ -61,32 +53,32 @@ static int lastOutput = 0;
 void fancontrol_init() {
     lastFan       = 0;
     fanOn         = false;
-    prevBurnState = burnState;
+    prevBurnState = sys.burnState;
     lastOutput    = 0;
+    fanKickUntil  = 0;
 }
 
 /* ============================================================
  *  HANDLE STATE TRANSITIONS
  * ============================================================ */
 static void fancontrol_handleStateChange() {
-    if (burnState != prevBurnState) {
+    if (sys.burnState != prevBurnState) {
 
         // Reset smoothing when leaving HOLD
-        if (prevBurnState == BURN_HOLD && burnState == BURN_RAMP) {
+        if (prevBurnState == BURN_HOLD && sys.burnState == BURN_RAMP) {
             lastFan = sys.clampMaxPercent;
             fanOn   = true;
         }
 
         // Reset on BOOST, IDLE, SAFETY
-        if (burnState == BURN_BOOST ||
-            burnState == BURN_IDLE  ||
-            burnState == BURN_SAFETY) {
+        if (sys.burnState == BURN_BOOST ||
+            sys.burnState == BURN_IDLE) {
 
             lastFan = 0;
             fanOn   = false;
         }
 
-        prevBurnState = burnState;
+        prevBurnState = sys.burnState;
     }
 }
 
@@ -97,14 +89,32 @@ int fan_compute(int demand) {
 
     fancontrol_handleStateChange();
 
-    // SAFETY override
-    if (burnState == BURN_SAFETY) {
+    if (sys.exhaustFallbackActive &&
+        (sys.burnState == BURN_BOOST ||
+         sys.burnState == BURN_RAMP ||
+         sys.burnState == BURN_HOLD)) {
+        fanOn = true;
+        lastOutput = 100;
+        fanKickUntil = 0;
+        return 100;
+    }
+
+    if (sys.safetyState != SAFETY_OK) {
         fanOn = false;
+        lastOutput = 0;
+        fanKickUntil = 0;
+        return 0;
+    }
+
+    if (sys.emberGuardianLatched || sys.burnState == BURN_EMBER_GUARD) {
+        fanOn = false;
+        lastOutput = 0;
+        fanKickUntil = 0;
         return 0;
     }
 
     // BOOST override
-    if (burnState == BURN_BOOST) {
+    if (sys.burnState == BURN_BOOST) {
         fanOn = true;
         return 100;
     }
@@ -118,6 +128,12 @@ int fan_compute(int demand) {
         int fan = demand;
         if (fan < sys.clampMinPercent) fan = sys.clampMinPercent;
         if (fan > sys.clampMaxPercent) fan = sys.clampMaxPercent;
+
+        if (lastOutput == 0) {
+            if (fanKickUntil == 0) fanKickUntil = millis() + FAN_START_KICK_MS;
+            if (millis() < fanKickUntil) return 100;
+            fanKickUntil = 0;
+        }
 
         // Ramp limiter
         int delta = fan - lastOutput;
@@ -137,6 +153,8 @@ int fan_compute(int demand) {
     // Fan OFF when demand < clampMinPercent
     if (demand < sys.clampMinPercent) {
         fanOn = false;
+        lastOutput = 0;
+        fanKickUntil = 0;
         return 0;
     }
 
@@ -147,12 +165,20 @@ int fan_compute(int demand) {
 
     // Output
     if (!fanOn) {
+        lastOutput = 0;
+        fanKickUntil = 0;
         return 0;
     }
 
     int fan = demand;
     if (fan < sys.clampMinPercent) fan = sys.clampMinPercent;
     if (fan > sys.clampMaxPercent) fan = sys.clampMaxPercent;
+
+    if (lastOutput == 0) {
+        if (fanKickUntil == 0) fanKickUntil = millis() + FAN_START_KICK_MS;
+        if (millis() < fanKickUntil) return 100;
+        fanKickUntil = 0;
+    }
 
     // ============================================================
     // Output Ramp Limiter (smooth fan transitions)

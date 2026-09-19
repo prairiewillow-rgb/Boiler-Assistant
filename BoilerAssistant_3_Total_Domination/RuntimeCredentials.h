@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Runtime Credentials API (v3.0 "Total Domination")
+ *  Boiler Assistant – Runtime Credentials API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: RuntimeCredentials.h
  *  Author: The Architect Collective
@@ -22,7 +22,7 @@
  *      - All fields are fixed‑size arrays for deterministic storage.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -38,7 +38,10 @@ struct RuntimeCredentials {
     char mqttUser[32]   = {0};
     char mqttPass[64]   = {0};
 
-    char otaPass[32]    = {0};
+    // Control/API password. Kept at the same struct position for EEPROM compatibility.
+    char controlPass[32] = {0};
+
+    char displayName[32] = {0};
 };
 
 extern RuntimeCredentials runtimeCreds;

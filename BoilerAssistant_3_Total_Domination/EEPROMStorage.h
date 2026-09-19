@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage API (v3.0 "Total Domination")
+ *  Boiler Assistant – EEPROM Storage API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.h
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - No UI or control logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -52,6 +52,8 @@ void eeprom_saveDeadband(int v);
 void eeprom_saveClampMin(int v);
 void eeprom_saveClampMax(int v);
 void eeprom_saveDeadzone(int v);
+float eeprom_loadAdaptiveSlope();
+void eeprom_saveAdaptiveSlope(float value);
 
 /* ============================================================
  *  EMBER GUARDIAN
@@ -86,6 +88,8 @@ void eeprom_saveRunMode(uint8_t mode);
  *  PROBE ROLES
  * ============================================================ */
 void eeprom_saveProbeRoles();
+void eeprom_loadProbeNames();
+void eeprom_saveProbeName(uint8_t index);
 
 /* ============================================================
  *  RUNTIME CREDENTIALS

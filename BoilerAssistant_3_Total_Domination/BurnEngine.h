@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Burn Engine Public API (v3.0 "Total Domination")
+ *  Boiler Assistant – Burn Engine Public API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.h
  *  Author: The Architect Collective
@@ -35,7 +35,7 @@
  *        fully owned by the Burn Engine module.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -51,6 +51,13 @@ void burnengine_init();
 
 // Force a BOOST start (used by UI or AUTO TANK logic)
 void burnengine_startBoost();
+
+// Clear the pending sensor-fault confirmation timers after operator reset
+void burnengine_resetSensorFault();
+void burnengine_resetAlarms();
+
+// Current learned multiplier used by adaptive fan control
+float burnengine_getAdaptiveSlope();
 
 // Main compute function (dispatcher)
 int burnengine_compute();

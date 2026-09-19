@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Fan Control API (v3.0 "Total Domination")
+ *  Boiler Assistant – Fan Control API (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.h
  *  Author: The Architect Collective
@@ -31,7 +31,7 @@
  *      - No UI, EEPROM, or WiFi logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 

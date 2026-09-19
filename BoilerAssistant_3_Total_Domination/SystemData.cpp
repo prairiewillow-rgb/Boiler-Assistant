@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System Data Module (v3.0 "Total Domination")
+ *  Boiler Assistant – System Data Module (v3.1 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *      - All fields are explicitly initialized for deterministic boot
  *
  *  Version:
- *      Boiler Assistant v3.0 "Total Domination"
+ *      Boiler Assistant v3.1 "Total Domination"
  * ============================================================
  */
 
@@ -111,20 +111,26 @@ void systemdata_init()
     sys.waterProbeCount = 0;
     for (uint8_t i = 0; i < MAX_WATER_PROBES; i++) {
         sys.waterTempF[i]  = NAN;
+        sys.waterTempLastGoodMs[i] = 0;
         sys.probeRoleMap[i] = 0;   // default role index 0 (tank or first role)
+        snprintf(sys.waterProbeNames[i], PROBE_NAME_LENGTH, "Probe %u", i + 1);
     }
 
     /* EXHAUST */
     sys.exhaustSensorOK = false;
+    sys.exhaustLastGoodMs = 0;
     sys.exhaustSmoothF  = NAN;
     sys.exhaustRawF     = NAN;
     sys.exhaustSetpoint = 450;
+    sys.exhaustFallbackActive = false;
 
     /* FAN CONTROL */
     sys.clampMinPercent = 10;
     sys.clampMaxPercent = 60;
     sys.deadbandF       = 20;
     sys.deadzoneFanMode = 0;
+    sys.fanDemand       = 0;
+    sys.fanFinal        = 0;
 
     /* BOOST */
     sys.boostActive      = false;
@@ -133,6 +139,7 @@ void systemdata_init()
 
     /* SAFETY */
     sys.safetyState = SAFETY_OK;
+    sys.sensorFaultMask = 0;
 
     /* BURN ENGINE */
     sys.burnState        = BURN_IDLE;
@@ -196,6 +203,7 @@ void systemdata_init()
 
     /* ACTIVE ENVIRONMENT STATE */
     sys.envActiveSeason        = ENV_SEASON_NONE;
+    sys.envSeasonChangedMs     = 0;
     sys.envActiveSetpointF     = sys.exhaustSetpoint;
     sys.envActiveClampPercent  = sys.clampMaxPercent;
     sys.envActiveTankHighF     = sys.tankHighSetpointF;
