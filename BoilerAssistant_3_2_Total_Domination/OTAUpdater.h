@@ -19,6 +19,9 @@ enum OtaInstallResult {
 const char* ota_currentVersion();
 const char* ota_latestVersion();
 
+// Short reason for the last OTA_CHECK_FAILED (fits one LCD line).
+const char* ota_checkError();
+
 // Fetches firmware-releases/version.txt from GitHub and compares it to FW_VERSION.
 OtaCheckResult ota_checkForUpdate();
 

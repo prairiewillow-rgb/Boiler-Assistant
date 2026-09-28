@@ -37,6 +37,7 @@ static const unsigned long OTA_HTTP_TIMEOUT_MS     = 10000UL;
 static const unsigned long OTA_DOWNLOAD_TIMEOUT_MS = 300000UL;
 
 static char latestVersion[16] = "";
+static char checkError[21] = "";
 
 static bool parseVersion(const char* text, int& major, int& minor, int& patch) {
     return sscanf(text, "%d.%d.%d", &major, &minor, &patch) == 3;
@@ -64,14 +65,22 @@ const char* ota_latestVersion() {
     return latestVersion;
 }
 
+const char* ota_checkError() {
+    return checkError;
+}
+
 OtaCheckResult ota_checkForUpdate() {
     latestVersion[0] = '\0';
+    checkError[0] = '\0';
 
     if (WiFi.status() != WL_CONNECTED) return OTA_CHECK_NO_WIFI;
 
     WiFiSSLClient client;
     WDT.refresh();
-    if (!client.connect(OTA_HOST, 443)) return OTA_CHECK_FAILED;
+    if (!client.connect(OTA_HOST, 443)) {
+        strncpy(checkError, "SSL CONNECT FAILED", sizeof(checkError) - 1);
+        return OTA_CHECK_FAILED;
+    }
 
     // HTTP/1.0 so the server replies without chunked encoding.
     client.print("GET ");
@@ -86,17 +95,23 @@ OtaCheckResult ota_checkForUpdate() {
     uint8_t lineBreaks = 0;
     bool inBody = false;
     uint8_t bodyLen = 0;
+    bool gotData = false;
 
+    // connected() can report false before buffered data is read, so only stop once data has arrived.
     unsigned long start = millis();
-    while ((client.connected() || client.available()) &&
-           millis() - start < OTA_HTTP_TIMEOUT_MS) {
+    while (millis() - start < OTA_HTTP_TIMEOUT_MS) {
         WDT.refresh();
         if (!client.available()) {
+            if (gotData && !client.connected()) break;
             delay(5);
             continue;
         }
 
-        char c = client.read();
+        int value = client.read();
+        if (value < 0) continue;
+        char c = (char)value;
+        gotData = true;
+
         if (!inBody) {
             if (!statusDone) {
                 if (c == '\n') statusDone = true;
@@ -115,8 +130,20 @@ OtaCheckResult ota_checkForUpdate() {
     latestVersion[bodyLen] = '\0';
 
     int major, minor, patch;
-    if (strstr(statusLine, " 200") == nullptr ||
-        !parseVersion(latestVersion, major, minor, patch)) {
+    if (!gotData) {
+        strncpy(checkError, "NO RESPONSE", sizeof(checkError) - 1);
+    } else if (strstr(statusLine, " 200") == nullptr) {
+        snprintf(checkError, sizeof(checkError), "HTTP:%s", statusLine + (statusLen > 9 ? 9 : 0));
+    } else if (!parseVersion(latestVersion, major, minor, patch)) {
+        snprintf(checkError, sizeof(checkError), "BAD VER:%s", latestVersion);
+    }
+
+    Serial.print("OTA check status: ");
+    Serial.println(statusLine);
+    Serial.print("OTA check body: ");
+    Serial.println(latestVersion);
+
+    if (checkError[0] != '\0') {
         latestVersion[0] = '\0';
         return OTA_CHECK_FAILED;
     }

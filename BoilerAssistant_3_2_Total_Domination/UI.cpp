@@ -886,6 +886,7 @@ static void ui_showNetworkingMenu() {
  * ============================================================ */
 static const char* otaStatusLine1 = "";
 static const char* otaStatusLine2 = "";
+static const char otaCheckFailedText[] = "GITHUB CHECK FAILED";
 
 static void ui_setOtaStatus(const char* line1, const char* line2) {
     otaStatusLine1 = line1;
@@ -895,7 +896,11 @@ static void ui_setOtaStatus(const char* line1, const char* line2) {
 
 static void ui_showOtaStatus() {
     char l3[21];
-    snprintf(l3, 21, "THIS: V%s", ota_currentVersion());
+    if (otaStatusLine2 == otaCheckFailedText && ota_checkError()[0] != '\0') {
+        snprintf(l3, 21, "%s", ota_checkError());
+    } else {
+        snprintf(l3, 21, "THIS: V%s", ota_currentVersion());
+    }
     lcd4(otaStatusLine1, otaStatusLine2, l3, "*=BACK             ");
 }
 
@@ -926,7 +931,7 @@ static void ui_otaCheck() {
             ui_setOtaStatus("OTA UPDATE         ", "WIFI NOT CONNECTED ");
             break;
         default:
-            ui_setOtaStatus("OTA UPDATE         ", "GITHUB CHECK FAILED");
+            ui_setOtaStatus("OTA UPDATE         ", otaCheckFailedText);
             break;
     }
 }
