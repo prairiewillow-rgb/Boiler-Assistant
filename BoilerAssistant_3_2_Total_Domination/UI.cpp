@@ -898,6 +898,8 @@ static void ui_showOtaStatus() {
     char l3[21];
     if (otaStatusLine2 == otaCheckFailedText && ota_checkError()[0] != '\0') {
         snprintf(l3, 21, "%s", ota_checkError());
+    } else if (ota_installError()[0] != '\0') {
+        snprintf(l3, 21, "%s", ota_installError());
     } else {
         snprintf(l3, 21, "THIS: V%s", ota_currentVersion());
     }

@@ -445,12 +445,15 @@ void wifiapi_init() {
     server.begin();
 }
 
+void wifiapi_stop() {
+    server.end();
+}
+
 /* ============================================================
  *  WiFi Loop
  * ============================================================ */
 
 void wifiapi_loop() {
-
     if (wifi_prov_isAPMode()) {
         sys.wifiOK = false;
         return;

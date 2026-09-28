@@ -50,10 +50,11 @@ jobs:
           # USB updater expects only the current .bin in this folder.
           rm -f firmware-releases/*.bin
           cp "build/$SKETCH.ino.bin" "firmware-releases/BoilerAssistant_${{ steps.ver.outputs.version }}.bin"
-          cp build/BoilerAssistant.ota firmware-releases/BoilerAssistant.ota
+          # Root-level short name keeps the OTA URL under the modem's 128-byte command limit.
+          cp build/BoilerAssistant.ota fw.ota
           echo "${{ steps.ver.outputs.version }}" > firmware-releases/version.txt
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add -A firmware-releases
+          git add -A firmware-releases fw.ota
           git commit -m "Firmware ${{ steps.ver.outputs.version }}" || echo "No changes"
           git push

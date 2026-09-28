@@ -37,6 +37,9 @@
 // Initialize WiFi + HTTP JSON API (non‑blocking)
 void wifiapi_init();
 
+// Releases the listening socket so the WiFi bridge is free (used before OTA).
+void wifiapi_stop();
+
 // Run WiFi retry + HTTP server loop (non‑blocking)
 void wifiapi_loop();
 

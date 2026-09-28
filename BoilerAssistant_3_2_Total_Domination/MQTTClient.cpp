@@ -157,6 +157,11 @@ void mqtt_init() {
 // LOOP
 // ============================================================
 
+void mqtt_stop() {
+    mqtt.stop();
+    wifiClient.stop();
+}
+
 void mqtt_loop() {
     if (wifi_prov_isAPMode()) return;
     if (!mqttAuthConfigured) return;

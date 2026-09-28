@@ -37,6 +37,9 @@
 // Initialize WiFi + MQTT subsystem
 void mqtt_init();
 
+// Closes the broker connection so the WiFi bridge is free (used before OTA).
+void mqtt_stop();
+
 // Non‑blocking MQTT loop (called from main loop)
 void mqtt_loop();
 

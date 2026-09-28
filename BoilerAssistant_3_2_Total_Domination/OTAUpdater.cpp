@@ -21,6 +21,8 @@
 #include "SystemData.h"
 #include "Pinout.h"
 #include "RuntimeCredentials.h"
+#include "WiFiAPI.h"
+#include "MQTTClient.h"
 
 #include <Arduino.h>
 #include <WiFiS3.h>
@@ -43,14 +45,16 @@ void ota_clearActive() {
 
 static const char OTA_HOST[]         = "raw.githubusercontent.com";
 static const char OTA_VERSION_PATH[] = "/prairiewillow-rgb/Boiler-Assistant/main/firmware-releases/version.txt";
-static const char OTA_FILE_URL[]     = "https://raw.githubusercontent.com/prairiewillow-rgb/Boiler-Assistant/main/firmware-releases/BoilerAssistant.ota";
-static const char OTA_LOCAL_PATH[]   = "/update.bin";
+// The modem truncates commands at MAX_BUFF_SIZE (128), so the URL and local path are kept short.
+static const char OTA_FILE_URL[]     = "https://raw.githubusercontent.com/prairiewillow-rgb/Boiler-Assistant/main/fw.ota";
+static const char OTA_LOCAL_PATH[]   = "/u.bin";
 
 static const unsigned long OTA_HTTP_TIMEOUT_MS     = 10000UL;
 static const unsigned long OTA_DOWNLOAD_TIMEOUT_MS = 300000UL;
 
 static char latestVersion[16] = "";
 static char checkError[21] = "";
+static char installError[21] = "";
 
 static bool parseVersion(const char* text, int& major, int& minor, int& patch) {
     return sscanf(text, "%d.%d.%d", &major, &minor, &patch) == 3;
@@ -80,6 +84,10 @@ const char* ota_latestVersion() {
 
 const char* ota_checkError() {
     return checkError;
+}
+
+const char* ota_installError() {
+    return installError;
 }
 
 OtaCheckResult ota_checkForUpdate() {
@@ -195,28 +203,48 @@ static void ota_recover(OTAUpdate& ota) {
 }
 
 OtaInstallResult ota_install(void (*progress)(int percent)) {
+    installError[0] = '\0';
+
+    Serial.print("OTA wifi bridge fw: ");
+    Serial.println(WiFi.firmwareVersion());
+
     if (!wifiBridgeSupportsOta()) return OTA_INSTALL_WIFI_FW_OLD;
 
     ota_enterSafeState();
 
+    // The bridge handles one job at a time; free its sockets before flashing.
+    mqtt_stop();
+    wifiapi_stop();
+    delay(500);
+    WDT.refresh();
+
     OTAUpdate ota;
     WDT.refresh();
-    if (ota.begin(OTA_LOCAL_PATH) != OTAUpdate::OTA_ERROR_NONE) {
+    int ret = ota.begin(OTA_LOCAL_PATH);
+    Serial.print("OTA begin: ");
+    Serial.println(ret);
+    if (ret != OTAUpdate::OTA_ERROR_NONE) {
+        snprintf(installError, sizeof(installError), "BEGIN ERR %d", ret);
         ota_recover(ota);
         return OTA_INSTALL_BEGIN_FAILED;
     }
 
     WDT.refresh();
-    if (ota.setCACert(OTA_ROOT_CA) != OTAUpdate::OTA_ERROR_NONE) {
+    ret = ota.setCACert(OTA_ROOT_CA);
+    Serial.print("OTA setCACert: ");
+    Serial.println(ret);
+    if (ret != OTAUpdate::OTA_ERROR_NONE) {
+        snprintf(installError, sizeof(installError), "CERT ERR %d", ret);
         ota_recover(ota);
         return OTA_INSTALL_BEGIN_FAILED;
     }
 
     WDT.refresh();
     int size = ota.startDownload(OTA_FILE_URL, OTA_LOCAL_PATH);
+    Serial.print("OTA startDownload: ");
+    Serial.println(size);
     if (size <= 0) {
-        Serial.print("OTA startDownload error: ");
-        Serial.println(size);
+        snprintf(installError, sizeof(installError), "START ERR %d", size);
         ota_recover(ota);
         return OTA_INSTALL_DOWNLOAD_FAILED;
     }
@@ -229,6 +257,7 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
         if (received < 0 || millis() - start > OTA_DOWNLOAD_TIMEOUT_MS) {
             Serial.print("OTA download error: ");
             Serial.println(received);
+            snprintf(installError, sizeof(installError), "DL ERR %d", received);
             ota_recover(ota);
             return OTA_INSTALL_DOWNLOAD_FAILED;
         }
@@ -237,13 +266,20 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
     }
 
     WDT.refresh();
-    if (ota.verify() != OTAUpdate::OTA_ERROR_NONE) {
+    ret = ota.verify();
+    Serial.print("OTA verify: ");
+    Serial.println(ret);
+    if (ret != OTAUpdate::OTA_ERROR_NONE) {
+        snprintf(installError, sizeof(installError), "VERIFY ERR %d", ret);
         ota_recover(ota);
         return OTA_INSTALL_VERIFY_FAILED;
     }
 
     WDT.refresh();
-    ota.update(OTA_LOCAL_PATH);
+    ret = ota.update(OTA_LOCAL_PATH);
+    Serial.print("OTA update: ");
+    Serial.println(ret);
+    snprintf(installError, sizeof(installError), "FLASH ERR %d", ret);
     ota_recover(ota);
     return OTA_INSTALL_UPDATE_FAILED;
 }
