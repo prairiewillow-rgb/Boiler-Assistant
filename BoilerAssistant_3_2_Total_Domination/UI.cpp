@@ -1885,6 +1885,7 @@ case UI_SEASON_EDIT_CLAMPMAX:
         /* OTA RESULT */
         case UI_OTA_STATUS:
             if (k == '*' || k == '#') {
+                ota_clearActive();
                 uiState = UI_NETWORKING;
             }
             break;

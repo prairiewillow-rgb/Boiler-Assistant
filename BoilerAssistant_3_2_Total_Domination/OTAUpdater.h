@@ -31,4 +31,8 @@ void ota_enterSafeState();
 // Downloads and installs the .ota image. Only returns on failure; success reboots the board.
 OtaInstallResult ota_install(void (*progress)(int percent));
 
+// True from the moment an install starts until the operator acknowledges a failure.
+bool ota_isActive();
+void ota_clearActive();
+
 #endif // OTA_UPDATER_H

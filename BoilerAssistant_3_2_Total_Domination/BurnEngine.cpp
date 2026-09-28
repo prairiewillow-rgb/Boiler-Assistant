@@ -44,6 +44,7 @@
 #include "Sensors.h"
 #include "Pinout.h"
 #include "EEPROMStorage.h"
+#include "OTAUpdater.h"
 
 extern SystemData sys;
 
@@ -250,6 +251,15 @@ int burnengine_compute() {
     unsigned long now = millis();
 
     updateBurnHistory(now);
+
+    if (ota_isActive()) {
+        digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+        sys.burnState = BURN_IDLE;
+        sys.boostActive = false;
+        sys.rampTimerActive = false;
+        sys.holdTimerActive = false;
+        return 0;
+    }
 
     if (sys.safetyState == SAFETY_SENSOR_FAULT) {
         digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
