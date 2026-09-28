@@ -67,6 +67,10 @@ static double burnengine_holdEntryTemperature() {
 static unsigned long holdLowSinceMs = 0;
 static const unsigned long HOLD_LOW_CONFIRM_MS = 15000UL;
 static const double HOLD_EXIT_HYSTERESIS_F = 10.0;
+// Mode 0: fan latches on below the band and stays on until exhaust reaches setpoint.
+static bool holdFanCalling = false;
+// Degrees below the band over which HOLD fan demand scales from min to max clamp.
+static const double HOLD_RECOVERY_SPAN_F = 50.0;
 
 static float adaptiveSlope = 1.0f;
 static double adaptiveLastTemperature = NAN;
@@ -326,11 +330,17 @@ int burnengine_compute() {
         return 0;
     }
 
-    if (sys.controlMode == RUNMODE_CONTINUOUS) {
-        return burnengine_computeContinuous();
-    } else {
-        return burnengine_computeAutoTank();
+    int demand = (sys.controlMode == RUNMODE_CONTINUOUS)
+                     ? burnengine_computeContinuous()
+                     : burnengine_computeAutoTank();
+
+    // Run at max clamp while the exhaust probe is faulted or awaiting confirmation.
+    if (exhaustFault &&
+        (sys.burnState == BURN_RAMP || sys.burnState == BURN_HOLD)) {
+        demand = sys.clampMaxPercent;
     }
+
+    return demand;
 }
 
 /* ============================================================
@@ -359,6 +369,7 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
         if (now - holdLowSinceMs >= HOLD_LOW_CONFIRM_MS) {
             sys.burnState = BURN_RAMP;
             holdLowSinceMs = 0;
+            holdFanCalling = false;
             return sys.fanFinal;   // smooth transition at the previous fan level
         }
     } else {
@@ -388,19 +399,21 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
      * ============================================================ */
     if (sys.deadzoneFanMode == 0) {
 
-        // In band → OFF
+        if (exhaustControlF < low) holdFanCalling = true;
+        if (exhaustControlF >= sys.exhaustSetpoint) holdFanCalling = false;
+
+        // In band → OFF, unless still recovering from below the band
         if (exhaustControlF >= low && exhaustControlF <= high) {
-            return 0;
+            return holdFanCalling ? sys.clampMinPercent : 0;
         }
 
-        // Below band → ramp up toward 100%
+        // Below band → scale from min clamp toward max clamp
         if (exhaustControlF < low) {
-            double span = bandHalf;
-            double e    = low - exhaustControlF;
-            if (e >= span) return 100;
-            double pct = (double)sys.clampMaxPercent * (e / span) * adaptiveSlope;
-            if (pct < sys.clampMinPercent) pct = sys.clampMinPercent;
-            if (pct > sys.clampMaxPercent) pct = sys.clampMaxPercent;
+            double span = bandHalf > HOLD_RECOVERY_SPAN_F ? bandHalf : HOLD_RECOVERY_SPAN_F;
+            double frac = ((low - exhaustControlF) / span) * adaptiveSlope;
+            if (frac > 1.0) frac = 1.0;
+            double pct = sys.clampMinPercent +
+                         (sys.clampMaxPercent - sys.clampMinPercent) * frac;
             return (int)pct;
         }
 
@@ -427,7 +440,12 @@ static int burnengine_finalize(int demand,
                                unsigned long now)
 {
     /* EMBER GUARDIAN TIMER + LATCH */
-    if (sys.burnState == BURN_RAMP || sys.burnState == BURN_HOLD) {
+    // Exhaust reading is stale when the probe is faulted; don't let it trigger a shutdown.
+    if (!sys.exhaustSensorOK || sys.exhaustFallbackActive) {
+        sys.emberGuardianTimerActive = false;
+        sys.emberGuardianStartMs     = 0;
+    }
+    else if (sys.burnState == BURN_RAMP || sys.burnState == BURN_HOLD) {
 
         if (!sys.emberGuardianTimerActive &&
             !isnan(exhaustGuardF) &&

@@ -37,6 +37,8 @@
 #include "EnvironmentalLogic.h"
 #include "WiFiProvisioning.h"
 #include "RuntimeCredentials.h"
+#include "OTAUpdater.h"
+#include "Version.h"
 #include <LiquidCrystal_PCF8574.h>
 #include <Arduino.h>
 #include <WiFiS3.h>
@@ -130,6 +132,29 @@ static const char* envSeasonLongName(EnvSeason s) {
 
 
 /* ============================================================
+ *  OUTDOOR UNIT CONVERSION (storage stays in F)
+ * ============================================================ */
+static char envUnitChar() {
+    return sys.envUnitsMetric ? 'C' : 'F';
+}
+
+static int envTempToDisplay(int16_t f) {
+    return sys.envUnitsMetric ? (int)lround((f - 32) * 5.0 / 9.0) : f;
+}
+
+static int16_t envTempFromDisplay(int v) {
+    return sys.envUnitsMetric ? (int16_t)lround(v * 9.0 / 5.0 + 32.0) : (int16_t)v;
+}
+
+static int envDeltaToDisplay(int16_t f) {
+    return sys.envUnitsMetric ? (int)lround(f * 5.0 / 9.0) : f;
+}
+
+static int16_t envDeltaFromDisplay(int v) {
+    return sys.envUnitsMetric ? (int16_t)lround(v * 9.0 / 5.0) : (int16_t)v;
+}
+
+/* ============================================================
  *  PROBE ROLE NAMES
  * ============================================================ */
 static const char* roleNames[] = {
@@ -208,10 +233,10 @@ static void ui_showSafetyLockout(int tankF)
 static void ui_showExhaustFallback()
 {
     lcd4(
-        " EXHAUST PROBE BAD ",
-        " SYSTEM DEFAULT    ",
-        " FAN RUNNING 100%  ",
-        " PRESS * TO RESET  "
+        "EXHAUST PROBE FAULT ",
+        "CLEAN OR REPLACE    ",
+        "FAN AT MAX CLAMP    ",
+        "PRESS * TO RESET    "
     );
 }
 
@@ -267,7 +292,9 @@ static void showBootScreen() {
     lcdRef->setCursor(0, 1); lcdRef->print("                    ");
     lcdRef->setCursor(0, 1); lcdRef->print(nameLine);
     lcdRef->setCursor(0, 2); lcdRef->print("  LOADING SYSTEMS   ");
-    lcdRef->setCursor(0, 3); lcdRef->print("        V3.2        ");
+    char versionLine[21];
+    snprintf(versionLine, sizeof(versionLine), "       V%-13s", FW_VERSION);
+    lcdRef->setCursor(0, 3); lcdRef->print(versionLine);
     delay(700);
 }
 
@@ -658,19 +685,21 @@ static void ui_showSeasonDetailMenu2() {
 
 static void ui_showSeasonEditStart() {
     char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3dF", *ui_getSeasonStartPtr(uiEditSeason));
+    snprintf(l2, 21, "CURRENT: %3d%c",
+             envTempToDisplay(*ui_getSeasonStartPtr(uiEditSeason)), envUnitChar());
     snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
 
     lcd4(
         "EDIT START TEMP   ",
         l2, l3,
-        "*=BACK   #=SAVE    "
+        "A=+/- *=BACK #=SAVE"
     );
 }
 
 static void ui_showSeasonEditBuffer() {
     char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3dF", *ui_getSeasonBufferPtr(uiEditSeason));
+    snprintf(l2, 21, "CURRENT: %3d%c",
+             envDeltaToDisplay(*ui_getSeasonBufferPtr(uiEditSeason)), envUnitChar());
     snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
 
     lcd4(
@@ -828,9 +857,14 @@ static void ui_showBME() {
         return;
     }
 
-    snprintf(l2, 21, "OUT TEMP:      %3.1fF", sys.envTempF);
+    if (sys.envUnitsMetric) {
+        snprintf(l2, 21, "OUT TEMP:      %3.1fC", (sys.envTempF - 32.0f) * 5.0f / 9.0f);
+        snprintf(l4, 21, "PRESSURE:   %5.1fkPa", sys.envPressure / 10.0f);
+    } else {
+        snprintf(l2, 21, "OUT TEMP:      %3.1fF", sys.envTempF);
+        snprintf(l4, 21, "PRESSURE:  %5.2finHg", sys.envPressure * 0.02953f);
+    }
     snprintf(l3, 21, "HUMIDITY:      %2.1f%%", sys.envHumidity);
-    snprintf(l4, 21, "PRESSURE:   %3.1fhPa", sys.envPressure);
 
     lcd4(
         "BME280 STATUS      ",
@@ -843,8 +877,78 @@ static void ui_showNetworkingMenu() {
         "NETWORKING        ",
         "1: NETWORK INFO    ",
         "2: FACTORY RESET   ",
-        "*=BACK             "
+        "3: OTA UPDATE      "
     );
+}
+
+/* ============================================================
+ *  OTA UPDATE SCREENS
+ * ============================================================ */
+static const char* otaStatusLine1 = "";
+static const char* otaStatusLine2 = "";
+
+static void ui_setOtaStatus(const char* line1, const char* line2) {
+    otaStatusLine1 = line1;
+    otaStatusLine2 = line2;
+    uiState = UI_OTA_STATUS;
+}
+
+static void ui_showOtaStatus() {
+    char l3[21];
+    snprintf(l3, 21, "THIS: V%s", ota_currentVersion());
+    lcd4(otaStatusLine1, otaStatusLine2, l3, "*=BACK             ");
+}
+
+static void ui_showOtaConfirm() {
+    char l1[21], l2[21];
+    snprintf(l1, 21, "NEW FIRMWARE V%s", ota_latestVersion());
+    snprintf(l2, 21, "THIS: V%s", ota_currentVersion());
+    lcd4(l1, l2, "BOILER WILL IDLE   ", "A:UPDATE  B:CANCEL ");
+}
+
+static void ui_otaProgress(int percent) {
+    char l3[21];
+    snprintf(l3, 21, "DOWNLOADING %3d%%", percent);
+    lcd4("INSTALLING UPDATE  ", "DO NOT POWER OFF   ", l3, "BOILER IS IDLE     ");
+}
+
+static void ui_otaCheck() {
+    lcd4("OTA UPDATE         ", "CHECKING GITHUB... ", "                   ", "                   ");
+
+    switch (ota_checkForUpdate()) {
+        case OTA_CHECK_NEWER:
+            uiState = UI_OTA_CONFIRM;
+            break;
+        case OTA_CHECK_UP_TO_DATE:
+            ui_setOtaStatus("OTA UPDATE         ", "ALREADY UP TO DATE ");
+            break;
+        case OTA_CHECK_NO_WIFI:
+            ui_setOtaStatus("OTA UPDATE         ", "WIFI NOT CONNECTED ");
+            break;
+        default:
+            ui_setOtaStatus("OTA UPDATE         ", "GITHUB CHECK FAILED");
+            break;
+    }
+}
+
+static void ui_otaInstall() {
+    ui_otaProgress(0);
+
+    // ota_install only returns on failure; success reboots into the new firmware.
+    switch (ota_install(ui_otaProgress)) {
+        case OTA_INSTALL_WIFI_FW_OLD:
+            ui_setOtaStatus("WIFI FW TOO OLD    ", "UPDATE VIA USB     ");
+            break;
+        case OTA_INSTALL_DOWNLOAD_FAILED:
+            ui_setOtaStatus("UPDATE FAILED      ", "DOWNLOAD ERROR     ");
+            break;
+        case OTA_INSTALL_VERIFY_FAILED:
+            ui_setOtaStatus("UPDATE FAILED      ", "FILE CHECK ERROR   ");
+            break;
+        default:
+            ui_setOtaStatus("UPDATE FAILED      ", "INSTALL ERROR      ");
+            break;
+    }
 }
 
 static bool ui_wifi_is_unconfigured() {
@@ -1463,10 +1567,14 @@ case UI_SEASON_EDIT_START:
     if (k >= '0' && k <= '9') {
         envSeasonEditValue += k;
     }
+    else if (k == 'A') {
+        if (envSeasonEditValue.startsWith("-")) envSeasonEditValue.remove(0, 1);
+        else envSeasonEditValue = "-" + envSeasonEditValue;
+    }
     else if (k == '#') {
-        if (envSeasonEditValue.length()) {
+        if (envSeasonEditValue.length() && envSeasonEditValue != "-") {
             int v = envSeasonEditValue.toInt();
-            *ui_getSeasonStartPtr(uiEditSeason) = v;
+            *ui_getSeasonStartPtr(uiEditSeason) = envTempFromDisplay(v);
             eeprom_saveEnvSeasonStarts();
         }
         envSeasonEditValue = "";
@@ -1488,7 +1596,7 @@ case UI_SEASON_EDIT_BUFFER:
     else if (k == '#') {
         if (envSeasonEditValue.length()) {
             int v = envSeasonEditValue.toInt();
-            *ui_getSeasonBufferPtr(uiEditSeason) = v;
+            *ui_getSeasonBufferPtr(uiEditSeason) = envDeltaFromDisplay(v);
             eeprom_saveEnvSeasonHyst();
         }
         envSeasonEditValue = "";
@@ -1743,10 +1851,36 @@ case UI_SEASON_EDIT_CLAMPMAX:
                     uiState = UI_NET_FACTORY_RESET_CONFIRM_1;
                     break;
 
+                case '3':
+                    ui_otaCheck();
+                    break;
+
                 case '*':
                 case '#':
                     uiState = UI_SENSORS_MENU;
                     break;
+            }
+            break;
+
+        /* OTA CONFIRMATION */
+        case UI_OTA_CONFIRM:
+            switch (k) {
+                case 'A':
+                    ui_otaInstall();
+                    break;
+
+                case 'B':
+                case '*':
+                case '#':
+                    uiState = UI_NETWORKING;
+                    break;
+            }
+            break;
+
+        /* OTA RESULT */
+        case UI_OTA_STATUS:
+            if (k == '*' || k == '#') {
+                uiState = UI_NETWORKING;
             }
             break;
 
@@ -1850,6 +1984,8 @@ void ui_showScreen(UIState st, double exhaustF, int fanPercent)
         case UI_NETWORK_INFO:                   ui_showNetworkInfo(); break;
         case UI_NET_FACTORY_RESET_CONFIRM_1:    ui_showNetFactoryResetConfirm1(); break;
         case UI_NET_FACTORY_RESET_CONFIRM_2:    ui_showNetFactoryResetConfirm2(); break;
+        case UI_OTA_CONFIRM:                    ui_showOtaConfirm(); break;
+        case UI_OTA_STATUS:                     ui_showOtaStatus(); break;
 
         default:
             ui_showHome(exhaustF, fanPercent);

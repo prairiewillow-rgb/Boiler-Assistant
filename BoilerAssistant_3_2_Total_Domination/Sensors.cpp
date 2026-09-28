@@ -199,15 +199,36 @@ void sensors_readWaterProbes() {
  * ============================================================ */
 
 void sensors_readBME280() {
-    if (!sys.envSensorOK) return;
+    static unsigned long lastRetryMs = 0;
+    static const unsigned long BME_RETRY_MS = 30000UL;
+
+    if (!sys.envSensorOK) {
+        unsigned long now = millis();
+        if (now - lastRetryMs < BME_RETRY_MS) return;
+        lastRetryMs = now;
+        sys.envSensorOK = bme.begin(0x76);
+        if (!sys.envSensorOK) return;
+    }
 
     float t = bme.readTemperature();
     float h = bme.readHumidity();
     float p = bme.readPressure();
 
-    if (!isnan(t)) sys.envTempF    = t * 9.0f / 5.0f + 32.0f;
-    if (!isnan(h)) sys.envHumidity = h;
-    if (!isnan(p)) sys.envPressure = p / 100.0f;
+    // A dropped or noisy I2C link returns garbage (e.g. ~300F); reject anything outside the BME280's rated range.
+    bool valid = !isnan(t) && t >= -40.0f && t <= 85.0f &&
+                 !isnan(p) && p >= 30000.0f && p <= 110000.0f;
+    if (!valid) {
+        sys.envSensorOK = false;
+        sys.envTempF    = NAN;
+        sys.envHumidity = NAN;
+        sys.envPressure = NAN;
+        lastRetryMs     = millis();
+        return;
+    }
+
+    sys.envTempF    = t * 9.0f / 5.0f + 32.0f;
+    sys.envPressure = p / 100.0f;
+    if (!isnan(h) && h >= 0.0f && h <= 100.0f) sys.envHumidity = h;
 }
 
 /* ============================================================

@@ -1,0 +1,59 @@
+name: Build OTA firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'BoilerAssistant_3_2_Total_Domination/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SKETCH: BoilerAssistant_3_2_Total_Domination
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install board core and libraries
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:renesas_uno@1.6.0
+          arduino-cli lib install "OneWire" "DallasTemperature" "Adafruit BME280 Library" \
+            "Adafruit MAX31855 library" "LiquidCrystal_PCF8574" "ArduinoMqttClient" "ArduinoJson@7.4.3"
+
+      - name: Compile
+        run: arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --output-dir build "$SKETCH"
+
+      - name: Read firmware version
+        id: ver
+        run: echo "version=$(grep -oP '#define FW_VERSION "\K[^"]+' "$SKETCH/Version.h")" >> "$GITHUB_OUTPUT"
+
+      - name: Convert .bin to .ota
+        run: |
+          pip install crccheck
+          git clone --depth 1 https://github.com/arduino-libraries/ArduinoIoTCloud.git iotcloud
+          cd iotcloud/extras/tools
+          gcc -shared -fPIC -o lzss.so lzss.c
+          python3 lzss.py --encode "$GITHUB_WORKSPACE/build/$SKETCH.ino.bin" "$GITHUB_WORKSPACE/build/fw.lzss"
+          python3 bin2ota.py UNOR4WIFI "$GITHUB_WORKSPACE/build/fw.lzss" "$GITHUB_WORKSPACE/build/BoilerAssistant.ota"
+
+      - name: Publish to firmware-releases
+        run: |
+          mkdir -p firmware-releases
+          # USB updater expects only the current .bin in this folder.
+          rm -f firmware-releases/*.bin
+          cp "build/$SKETCH.ino.bin" "firmware-releases/BoilerAssistant_${{ steps.ver.outputs.version }}.bin"
+          cp build/BoilerAssistant.ota firmware-releases/BoilerAssistant.ota
+          echo "${{ steps.ver.outputs.version }}" > firmware-releases/version.txt
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A firmware-releases
+          git commit -m "Firmware ${{ steps.ver.outputs.version }}" || echo "No changes"
+          git push

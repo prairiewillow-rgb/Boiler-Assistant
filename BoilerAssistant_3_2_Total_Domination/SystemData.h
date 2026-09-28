@@ -114,6 +114,7 @@ struct SystemData
     float envTempF;
     float envHumidity;
     float envPressure;
+    uint8_t envUnitsMetric;   // outdoor temp/pressure display only: 0 = F/inHg, 1 = C/kPa
 
     /* ------------------------------
      *  ENVIRONMENTAL SEASONAL LOGIC

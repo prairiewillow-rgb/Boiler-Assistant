@@ -45,6 +45,8 @@ static const int EEPROM_CONFIG_END = 87;
 static const int EEPROM_MAGIC_ADDR = 88;
 static const int EEPROM_VERSION_ADDR = 89;
 static const int EEPROM_CRC_ADDR = 90;
+// Outside the CRC range so adding it doesn't invalidate existing configs.
+static const int EEPROM_ENV_UNITS_ADDR = 92;
 static const int EEPROM_PROBE_NAMES_ADDR = 400;
 static const uint8_t EEPROM_MAGIC = 0xBA;
 static const uint8_t EEPROM_VERSION = 3;
@@ -271,6 +273,8 @@ void eeprom_init() {
         systemdata_init();
         eeprom_saveDefaultConfig();
     }
+
+    sys.envUnitsMetric = EEPROM.read(EEPROM_ENV_UNITS_ADDR) == 1 ? 1 : 0;
 }
 
 /* ============================================================
@@ -384,6 +388,10 @@ void eeprom_saveEnvAutoSeason(bool en) {
 void eeprom_saveEnvLockoutHours(uint8_t hours) {
     EEPROM.write(20, hours);
     eeprom_markConfigValid();
+}
+
+void eeprom_saveEnvUnits(uint8_t metric) {
+    EEPROM.update(EEPROM_ENV_UNITS_ADDR, metric ? 1 : 0);
 }
 
 void eeprom_saveEnvSeasonStarts() {

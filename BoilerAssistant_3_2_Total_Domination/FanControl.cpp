@@ -50,6 +50,13 @@ static unsigned long lastRampMs = 0;
 static const unsigned long FAN_START_KICK_MS = 750UL;
 static const unsigned long FAN_RAMP_INTERVAL_MS = 100UL;
 static const int FAN_RAMP_STEP_PERCENT = 3;
+static const unsigned long FAN_HOLD_RAMP_UP_INTERVAL_MS = 500UL;
+static const int FAN_HOLD_RAMP_UP_STEP_PERCENT = 1;
+
+// Fan-off mode anti-short-cycle timers
+static unsigned long fanStateChangedMs = 0;
+static const unsigned long FAN_MIN_ON_MS  = 30000UL;
+static const unsigned long FAN_MIN_OFF_MS = 60000UL;
 
 /* ============================================================
  *  INIT
@@ -77,18 +84,25 @@ static int fancontrol_rampTo(int target) {
         if ((long)(now - fanKickUntil) < 0) return 100;
         fanKickUntil = 0;
         lastRampMs = now;
+        // Kick only spins the motor up; climb from min clamp instead of falling from 100.
+        lastOutput = target < sys.clampMinPercent ? target : sys.clampMinPercent;
+        return lastOutput;
     }
 
-    unsigned long intervals = (now - lastRampMs) / FAN_RAMP_INTERVAL_MS;
+    bool slowUp = (sys.burnState == BURN_HOLD && target > lastOutput);
+    unsigned long intervalMs = slowUp ? FAN_HOLD_RAMP_UP_INTERVAL_MS : FAN_RAMP_INTERVAL_MS;
+    int stepPercent = slowUp ? FAN_HOLD_RAMP_UP_STEP_PERCENT : FAN_RAMP_STEP_PERCENT;
+
+    unsigned long intervals = (now - lastRampMs) / intervalMs;
     if (intervals == 0) return lastOutput;
 
-    int maxChange = (int)intervals * FAN_RAMP_STEP_PERCENT;
+    int maxChange = (int)intervals * stepPercent;
     int delta = target - lastOutput;
     if (delta > maxChange) delta = maxChange;
     if (delta < -maxChange) delta = -maxChange;
 
     lastOutput += delta;
-    lastRampMs += intervals * FAN_RAMP_INTERVAL_MS;
+    lastRampMs += intervals * intervalMs;
     return lastOutput;
 }
 
@@ -123,15 +137,17 @@ int fan_compute(int demand) {
 
     fancontrol_handleStateChange();
 
-    if (sys.exhaustFallbackActive &&
+    // Exhaust probe lost: run at max clamp (BOOST stays 100%) until tank logic idles the burn.
+    if ((sys.exhaustFallbackActive || !sys.exhaustSensorOK) &&
         (sys.burnState == BURN_BOOST ||
          sys.burnState == BURN_RAMP ||
          sys.burnState == BURN_HOLD)) {
+        int fan = (sys.burnState == BURN_BOOST) ? 100 : sys.clampMaxPercent;
         fanOn = true;
-        lastOutput = 100;
+        lastOutput = fan;
         fanKickUntil = 0;
         lastRampMs = millis();
-        return 100;
+        return fan;
     }
 
     if (sys.safetyState != SAFETY_OK) {
@@ -169,8 +185,9 @@ int fan_compute(int demand) {
 
     // ============================================================
     // MODE 1: Clamp Mode (fan always on)
+    // Fan-off mode only applies in HOLD; RAMP always keeps the fan running.
     // ============================================================
-    if (sys.deadzoneFanMode == 1) {
+    if (sys.deadzoneFanMode == 1 || sys.burnState == BURN_RAMP) {
         fanOn = true;
 
         int fan = demand;
@@ -184,18 +201,18 @@ int fan_compute(int demand) {
     // MODE 0: Fan-Off Mode (your exact rule)
     // ============================================================
 
-    // Fan OFF when demand < clampMinPercent
-    if (demand < sys.clampMinPercent) {
-        fanOn = false;
-        lastOutput = 0;
-        fanKickUntil = 0;
-        lastRampMs = millis();
-        return 0;
-    }
+    // OFF when demand < clampMin, ON when demand >= clampMin + 10,
+    // each change held for a minimum time to prevent short cycling.
+    unsigned long now = millis();
+    unsigned long heldMs = now - fanStateChangedMs;
 
-    // Fan ON when demand >= clampMinPercent + 10
-    if (demand >= (sys.clampMinPercent + 10)) {
+    if (fanOn && demand < sys.clampMinPercent && heldMs >= FAN_MIN_ON_MS) {
+        fanOn = false;
+        fanStateChangedMs = now;
+    } else if (!fanOn && demand >= (sys.clampMinPercent + 10) &&
+               heldMs >= FAN_MIN_OFF_MS) {
         fanOn = true;
+        fanStateChangedMs = now;
     }
 
     // Output

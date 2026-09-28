@@ -160,6 +160,7 @@ void systemdata_init()
     sys.envTempF    = NAN;
     sys.envHumidity = NAN;
     sys.envPressure = NAN;
+    sys.envUnitsMetric = 0;
 
     /* SEASONAL START TEMPS */
     sys.envSummerStartF      = 75;

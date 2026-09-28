@@ -241,7 +241,7 @@ static void mqtt_publishState() {
     doc["exhaust_raw"]    = sys.exhaustRawF;
     doc["exhaust_fallback"] = sys.exhaustFallbackActive;
     doc["exhaust_alert"] = sys.exhaustFallbackActive
-                                ? "EXHAUST SENSOR NEEDS REPLACEMENT - FAN 100% FALLBACK"
+                                ? "EXHAUST PROBE NEEDS CLEANING OR REPLACEMENT - FAN AT MAX CLAMP"
                                 : "";
     doc["tank_temp"]      = tankTemp;
     doc["tank_sensor_ok"] = tankSensorOK;
@@ -350,7 +350,7 @@ static void mqtt_publishAlertTransitions()
     if (exhaustFallback != lastExhaustFallback) {
         mqtt_publishAlert("EXHAUST_PROBE_FAULT",
                           exhaustFallback ?
-                              "EXHAUST PROBE FAULT - FAN 100% FALLBACK" :
+                              "EXHAUST PROBE NEEDS CLEANING OR REPLACEMENT - FAN AT MAX CLAMP" :
                               "EXHAUST PROBE FAULT CLEARED",
                           exhaustFallback);
         lastExhaustFallback = exhaustFallback;

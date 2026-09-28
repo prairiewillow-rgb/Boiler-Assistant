@@ -28,7 +28,7 @@
  *  v3.2 Additions:
  *      - Adaptive fan curve with persistent learning
  *      - Fan-off deadband with one-PWM variable-speed control
- *      - Exhaust-probe fallback with 100% fan output
+ *      - Exhaust-probe fallback at max clamp fan output
  *      - Mode-aware tank-probe safety handling
  *      - Address-stable water probes with periodic rescanning
  *      - Named monitor-only probes for MQTT and dashboard telemetry

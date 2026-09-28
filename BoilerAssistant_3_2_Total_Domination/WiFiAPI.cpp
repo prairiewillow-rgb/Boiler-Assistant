@@ -168,7 +168,7 @@ static String buildStateJson() {
     stateDoc["safety_text"] = safetyText;
     stateDoc["exhaust_fallback"] = sys.exhaustFallbackActive;
     stateDoc["alert"] = sys.exhaustFallbackActive
-                              ? "EXHAUST SENSOR NEEDS REPLACEMENT - FAN 100% FALLBACK"
+                              ? "EXHAUST PROBE NEEDS CLEANING OR REPLACEMENT - FAN AT MAX CLAMP"
                               : ((sys.emberGuardianLatched ||
                                   sys.burnState == BURN_EMBER_GUARD)
                                      ? "EMBER GUARDIAN - RESET REQUIRED"
@@ -187,6 +187,7 @@ static String buildStateJson() {
     env["temp_f"]   = sys.envTempF;
     env["humidity"] = sys.envHumidity;
     env["pressure"] = sys.envPressure;
+    env["units"]    = sys.envUnitsMetric ? "metric" : "imperial";
 
     JsonArray water = stateDoc.createNestedArray("water");
     for (uint8_t i = 0; i < sys.waterProbeCount; i++) {
@@ -253,6 +254,7 @@ static String buildSettingsJson() {
     settingsDoc["flue_recovery"]    = sys.flueRecoveryThreshold;
     settingsDoc["tank_low"]          = sys.tankLowSetpointF;
     settingsDoc["tank_high"]         = sys.tankHighSetpointF;
+    settingsDoc["env_units"]         = sys.envUnitsMetric;
     String out;
     serializeJson(settingsDoc, out);
     return out;
@@ -263,7 +265,7 @@ static String buildSettingsJson() {
  * ============================================================ */
 
 static void handleApiSet(WiFiClient& client, const String& body) {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, body);
 
     if (err) {
@@ -282,6 +284,7 @@ static void handleApiSet(WiFiClient& client, const String& body) {
     int flueRecovery = sys.flueRecoveryThreshold;
     int tankLow = sys.tankLowSetpointF;
     int tankHigh = sys.tankHighSetpointF;
+    int envUnits = sys.envUnitsMetric;
 
     if (doc.containsKey("exhaust_setpoint")) exhaustSetpoint = doc["exhaust_setpoint"];
     if (doc.containsKey("deadband")) deadband = doc["deadband"];
@@ -294,6 +297,7 @@ static void handleApiSet(WiFiClient& client, const String& body) {
     if (doc.containsKey("flue_recovery")) flueRecovery = doc["flue_recovery"];
     if (doc.containsKey("tank_low")) tankLow = doc["tank_low"];
     if (doc.containsKey("tank_high")) tankHigh = doc["tank_high"];
+    if (doc.containsKey("env_units")) envUnits = doc["env_units"];
     if (!validExhaustSetpoint(exhaustSetpoint) ||
         !validDeadband(deadband) ||
         !validBoostTime(boostTime) ||
@@ -308,7 +312,8 @@ static void handleApiSet(WiFiClient& client, const String& body) {
         !validTankSetpoint(tankLow) ||
         !validTankSetpoint(tankHigh) ||
         tankLow >= tankHigh ||
-        tankHigh >= 190) {
+        tankHigh >= 190 ||
+        (envUnits != 0 && envUnits != 1)) {
         sendJson(client, "{\"error\":\"configuration value out of range\"}");
         return;
     }
@@ -368,6 +373,12 @@ static void handleApiSet(WiFiClient& client, const String& body) {
     if (doc.containsKey("tank_high")) {
         sys.tankHighSetpointF = tankHigh;
         eeprom_saveTankHigh(tankHigh);
+        changed = true;
+    }
+    if (doc.containsKey("env_units")) {
+        sys.envUnitsMetric = (uint8_t)envUnits;
+        eeprom_saveEnvUnits(sys.envUnitsMetric);
+        sys.uiNeedsRefresh = true;
         changed = true;
     }
     if (changed) {

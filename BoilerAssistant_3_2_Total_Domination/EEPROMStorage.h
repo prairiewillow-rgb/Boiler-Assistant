@@ -68,6 +68,7 @@ void eeprom_saveFlueRecovery(int v);
 void eeprom_saveEnvSeasonMode(uint8_t mode);
 void eeprom_saveEnvAutoSeason(bool en);
 void eeprom_saveEnvLockoutHours(uint8_t hours);
+void eeprom_saveEnvUnits(uint8_t metric);
 
 void eeprom_saveEnvSeasonStarts();
 void eeprom_saveEnvSeasonHyst();
