@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'BoilerAssistant_3_2_Total_Domination/**'
+      - 'BoilerAssistant_3_3_Total_Domination/**'
 
 permissions:
   contents: write
@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      SKETCH: BoilerAssistant_3_2_Total_Domination
+      SKETCH: BoilerAssistant_3_3_Total_Domination
 
     steps:
       - uses: actions/checkout@v4
