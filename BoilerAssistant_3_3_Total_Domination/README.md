@@ -12,6 +12,7 @@ Arduino UNO R4 WiFi firmware for boiler draft control, local LCD/keypad operatio
 - Fan minimum/maximum clamps, two deadzone modes, startup kick, and gradual output ramping.
 - Deadzone mode 0 allows the fan to turn off below its minimum threshold. Mode 1 keeps it on within the configured clamp range.
 - Exhaust-sensor fallback commands full fan output during an active burn after a confirmed sensor fault.
+- v3.3.1 opens the damper for 10 seconds before starting the fan, then applies a 2-second startup kick before returning to the requested speed.
 - The displayed fan percentage is the firmware's final output command. It is not a measured RPM, airflow, or AC output-voltage reading. Actual fan behavior depends on the connected dimmer/controller and motor.
 
 ### Safety Handling
@@ -92,6 +93,8 @@ D0 is reserved for Z-C in this firmware; do not also use it for `Serial1` RX. D9
 5. With the boiler working, check that the fan speeds up and slows down as the displayed percentage changes. Write down the unit ID, fan model, and lowest setting where the fan runs steadily.
 
 When the new Z-C wire is working, the controller uses it to time the dimmer. Units without the wire continue using the old D5 signal. If the Z-C signal is lost after it starts working, the controller stops adjusting the dimmer and holds its control signal ON whenever the fan command is above 0%. 
+
+The Z-C lead is a low-voltage signal and is not a neutral conductor. Some 120 V dimmer modules also require line and neutral to power the module or detect the AC waveform; others use a different arrangement. Follow the actual module's wiring diagram and add neutral only when that diagram requires it. Never connect 120 V line or neutral to UNO D0, D5, 5 V, GND, or another low-voltage pin.
 
 ## Safety
 
