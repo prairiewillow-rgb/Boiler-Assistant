@@ -7,7 +7,7 @@
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
- *  Description:
+ *                                                                                                                                                             Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
  *    Version 3.1 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
@@ -60,6 +60,7 @@
 #include "Sensors.h"
 #include "BurnEngine.h"
 #include "FanControl.h"
+#include "FanDimmer.h"
 #include "Keypad_I2C.h"
 #include "Pinout.h"
 
@@ -130,8 +131,7 @@ void setup() {
     pinMode(PIN_DAMPER, OUTPUT);
     digitalWrite(PIN_DAMPER, HIGH);   // default CLOSED
 
-    pinMode(PIN_FAN_PWM, OUTPUT);
-    analogWrite(PIN_FAN_PWM, 0);
+    fan_dimmer_init();
 
     Serial.println();
     Serial.println("=== Boiler Assistant v3.3 Boot ===");
@@ -220,8 +220,7 @@ void loop() {
     // 3) Fan control (single source of truth)
     int fanPercent = fancontrol_apply(demand);
 
-    int pwm = map(fanPercent, 0, 100, 0, 255);
-    analogWrite(PIN_FAN_PWM, pwm);
+    fan_dimmer_setPercent(fanPercent);
 
     // 4) Update SystemData snapshot for UI / WiFi / MQTT
 

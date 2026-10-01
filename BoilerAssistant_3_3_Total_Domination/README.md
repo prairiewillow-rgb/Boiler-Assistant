@@ -48,7 +48,7 @@ Arduino UNO R4 WiFi firmware for boiler draft control, local LCD/keypad operatio
 - Responsive dashboard served by the UNO R4 WiFi at its network address, with Main, Burn history, Settings, and Sensors views.
 - Main view includes boiler/fan state, temperatures, environmental readings, and alarm presentation. History view charts water temperature; the chart is for trend review and is not a safety instrument.
 - STA-first Wi-Fi startup. If credentials are missing or the connection fails, the controller starts the `BoilerAssistant-Setup` access point and provisioning portal at `192.168.4.1`.
-- Provisioning accepts Wi-Fi and optional MQTT credentials, a display name, and a control/API password.
+- Provisioning accepts Wi-Fi and optional MQTT credentials, a display name (Insert your anme there), and a control/API password.
 - HTTP endpoints: `GET /api/state`, `GET /api/settings`, `GET /api/history`, and token-protected `POST /api/set`, `/api/probe`, and `/api/reset`. Write requests use the `X-Boiler-Token` header. A high-temperature reset remains local-only.
 - Optional MQTT publishes state, settings, water probes, outdoor readings, and alerts under `boiler/*`; it subscribes to `boiler/cmd/#` and publishes Home Assistant MQTT discovery when connected.
 - MQTT and the dashboard API are skipped while the controller is in Wi-Fi provisioning AP mode.
@@ -62,7 +62,8 @@ Arduino UNO R4 WiFi firmware for boiler draft control, local LCD/keypad operatio
 ## Hardware and Build
 
 - Board: Arduino UNO R4 WiFi (`arduino:renesas_uno:unor4wifi`).
-- Fan command output: D5 PWM.
+- Fan dimmer output: D5; uses Z-C-synchronized PSM pulses when a valid Z-C signal is detected on D0, otherwise falls back to the legacy PWM output for existing installations.
+- RobotDyn-style phase dimmer: connect its low-voltage Z-C output to D0 and PSM to D5. D9 is not an external-interrupt pin on UNO R4. The control driver auto-detects Z-C so installations without that lead retain D5 PWM behavior.
 - Damper relay: D6, active LOW.
 - DS18B20 bus: D8.
 - Exhaust MAX31855: hardware SPI clock D13 and data D12, with chip select defined in `Pinout.h`.
@@ -71,6 +72,26 @@ Arduino UNO R4 WiFi firmware for boiler draft control, local LCD/keypad operatio
 - Compile for the UNO R4 WiFi using Arduino IDE or Arduino CLI. The VS Code task is named `Arduino: Verify UNO R4 WiFi`.
 
 See `Pinout.h` for pin assignments and `HardwareManifest.h` for the parts reference. The optional CYD 4-inch display client is maintained separately in `BoilerAssistant_CYD_4in_v3_1` and requires the ESP32 board package, `TFT_eSPI`, `XPT2046_Touchscreen`, `ArduinoJson`, and `PNGdec`.
+
+## Field Upgrade: RobotDyn Z-C Lead
+
+For installations using the RobotDyn-style dimmer with low-voltage terminals labeled `VCC`, `GND`, `Z-C`, and `PSM`, the v3.3 phase-control firmware needs **one additional low-voltage signal wire**. This is not an AC neutral wire and must never be connected to a mains terminal. These instructions apply only to that terminal layout; identify the actual board and its markings before work begins.
+
+| Signal | Existing or new connection |
+| --- | --- |
+| Dimmer `PSM` | Existing UNO R4 WiFi D5 connection; leave it in place. |
+| Dimmer `Z-C` | **New** signal lead to UNO R4 WiFi D0 (RX). |
+| Dimmer `VCC` and `GND` | Existing low-voltage supply and common ground; verify against the module's rated supply, but do not move them for this upgrade. |
+
+D0 is reserved for Z-C in this firmware; do not also use it for `Serial1` RX. D9 is not a supported external-interrupt input on the UNO R4 WiFi. Do not move the thermocouple chip-selects or the damper relay wiring.
+
+1. Have a qualified installer shut down the boiler, isolate **both mains and controller power**, lock out the supply, and verify de-energization before opening the enclosure. Do not connect or disconnect the dimmer while powered.
+2. Identify the low-voltage `Z-C` pin on the actual dimmer and UNO R4 WiFi D0. Route and secure one insulated signal lead from `Z-C` to D0, kept separate from mains wiring according to the module's isolation instructions and local electrical requirements. Do not connect `Z-C` to neutral, line, load, or earth.
+3. Confirm the existing `PSM`-to-D5, `VCC`, and `GND` connections remain intact, and check the new lead for shorts or loose terminations before closing the enclosure. No AC-side wiring changes are part of this modification.
+4. Install the v3.3 firmware containing `FanDimmer.cpp` if the unit does not already have it. Reassemble and energize only after the wiring has been checked.
+5. With the boiler working, check that the fan speeds up and slows down as the displayed percentage changes. Write down the unit ID, fan model, and lowest setting where the fan runs steadily.
+
+When the new Z-C wire is working, the controller uses it to time the dimmer. Units without the wire continue using the old D5 signal. If the Z-C signal is lost after it starts working, the controller stops adjusting the dimmer and holds its control signal ON whenever the fan command is above 0%. 
 
 ## Safety
 

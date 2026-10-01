@@ -52,8 +52,11 @@
  *  DIGITAL OUTPUTS
  * ============================================================ */
 
-// Fan PWM output (UNO R4 PWM-capable)
+// Fan dimmer PSM output (phase pulses when Z-C is detected, otherwise PWM)
 #define PIN_FAN_PWM        D5
+
+// Dimmer zero-cross input; D0 supports external interrupts on UNO R4.
+#define PIN_FAN_ZERO_CROSS D0
 
 // Damper relay (active LOW)
 #define PIN_DAMPER         D6

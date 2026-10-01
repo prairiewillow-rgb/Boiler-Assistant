@@ -15,6 +15,7 @@
  */
 
 #include "OTAUpdater.h"
+#include "FanDimmer.h"
 #include "OTARootCA.h"
 #include "Version.h"
 #include "SystemState.h"
@@ -184,7 +185,7 @@ void ota_enterSafeState() {
     sys.fanFinal                 = 0;
     sys.fanDemand                = 0;
 
-    analogWrite(PIN_FAN_PWM, 0);
+    fan_dimmer_setPercent(0);
     digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
 }
 

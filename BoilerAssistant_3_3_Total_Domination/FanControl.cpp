@@ -47,7 +47,9 @@ static BurnState prevBurnState = BURN_IDLE;
 static int lastOutput = 0;
 static unsigned long fanKickUntil = 0;
 static unsigned long lastRampMs = 0;
-static const unsigned long FAN_START_KICK_MS = 750UL;
+static unsigned long fanStartDelayUntil = 0;
+static const unsigned long FAN_START_KICK_MS = 2000UL;
+static const unsigned long FAN_DAMPER_DELAY_MS = 10000UL;
 static const unsigned long FAN_RAMP_INTERVAL_MS = 100UL;
 static const int FAN_RAMP_STEP_PERCENT = 3;
 static const unsigned long FAN_HOLD_RAMP_UP_INTERVAL_MS = 500UL;
@@ -68,6 +70,7 @@ void fancontrol_init() {
     lastOutput    = 0;
     fanKickUntil  = 0;
     lastRampMs    = millis();
+    fanStartDelayUntil = 0;
 }
 
 static int fancontrol_rampTo(int target) {
@@ -112,6 +115,21 @@ static int fancontrol_rampTo(int target) {
 static void fancontrol_handleStateChange() {
     if (sys.burnState != prevBurnState) {
 
+        bool enteringActiveState =
+            sys.burnState == BURN_BOOST ||
+            sys.burnState == BURN_RAMP ||
+            sys.burnState == BURN_HOLD;
+        bool wasActiveState =
+            prevBurnState == BURN_BOOST ||
+            prevBurnState == BURN_RAMP ||
+            prevBurnState == BURN_HOLD;
+
+        if (enteringActiveState && !wasActiveState) {
+            fanStartDelayUntil = millis() + FAN_DAMPER_DELAY_MS;
+            lastOutput = 0;
+            fanKickUntil = 0;
+        }
+
         // Reset smoothing when leaving HOLD
         if (prevBurnState == BURN_HOLD && sys.burnState == BURN_RAMP) {
             lastFan = sys.clampMaxPercent;
@@ -124,6 +142,7 @@ static void fancontrol_handleStateChange() {
 
             lastFan = 0;
             fanOn   = false;
+            if (sys.burnState == BURN_IDLE) fanStartDelayUntil = 0;
         }
 
         prevBurnState = sys.burnState;
@@ -136,6 +155,16 @@ static void fancontrol_handleStateChange() {
 int fan_compute(int demand) {
 
     fancontrol_handleStateChange();
+
+    if (fanStartDelayUntil != 0) {
+        if ((long)(millis() - fanStartDelayUntil) < 0) {
+            lastOutput = 0;
+            fanKickUntil = 0;
+            return 0;
+        }
+        fanStartDelayUntil = 0;
+        lastRampMs = millis();
+    }
 
     // Exhaust probe lost: run at max clamp (BOOST stays 100%) until tank logic idles the burn.
     if ((sys.exhaustFallbackActive || !sys.exhaustSensorOK) &&

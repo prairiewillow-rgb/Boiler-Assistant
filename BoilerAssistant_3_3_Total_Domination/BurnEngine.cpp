@@ -41,6 +41,7 @@
 #include "SystemState.h"
 #include "SystemData.h"
 #include "FanControl.h"
+#include "FanDimmer.h"
 #include "Sensors.h"
 #include "Pinout.h"
 #include "EEPROMStorage.h"
@@ -208,7 +209,7 @@ static bool sensorFaultConfirmed(bool faultActive,
 void burnengine_init() {
     sys.burnState = BURN_IDLE;
     historyLastState = BURN_IDLE;
-    analogWrite(PIN_FAN_PWM, 0);
+    fan_dimmer_setPercent(0);
     adaptiveSlope = eeprom_loadAdaptiveSlope();
     adaptiveLastTemperature = NAN;
     adaptiveLastSampleMs = 0;
