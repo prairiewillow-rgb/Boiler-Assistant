@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ UI Module (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ UI Module (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 
@@ -45,7 +45,7 @@
 #include <EEPROM.h>
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 â†’ v3.3.4)
+ *  COMPATIBILITY SHIMS (v2.2 â†’ v3.3.6)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8

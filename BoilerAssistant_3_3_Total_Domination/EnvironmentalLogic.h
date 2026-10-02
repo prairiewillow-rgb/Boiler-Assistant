@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Environmental Logic (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ Environmental Logic (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -16,7 +16,7 @@
  *          â€¢ Tank HIGH / LOW water setpoints (per season)
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 
@@ -27,7 +27,7 @@
 #include "SystemState.h"   // EnvSeason now defined here
 
 /* ============================================================
- *  COMPATIBILITY SHIM (v2.2 â†’ v3.3.4)
+ *  COMPATIBILITY SHIM (v2.2 â†’ v3.3.6)
  * ============================================================ */
 #ifndef ENV_SEASON_NONE
 #define ENV_SEASON_NONE ((EnvSeason)255)

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ MQTT Client Module (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ MQTT Client Module (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - Reconnect logic is rateâ€‘limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 

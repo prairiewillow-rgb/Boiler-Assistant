@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ EEPROM Storage API (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ EEPROM Storage API (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.h
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - No UI or control logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 

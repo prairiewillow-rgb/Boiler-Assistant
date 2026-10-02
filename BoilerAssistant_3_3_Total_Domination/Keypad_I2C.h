@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Keypad IÂ²C API (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ Keypad IÂ²C API (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -24,7 +24,7 @@
  *      - API unchanged and fully backward compatible
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 

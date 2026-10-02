@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Burn Engine Module (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ Burn Engine Module (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *      - Deterministic fan clamping and demand shaping
  *      - Expanded documentation for openâ€‘source contributors
  *
- *  v3.3.4 Additions:
+ *  v3.3.6 Additions:
  *      - Automatic self-cleaning burn: after a configurable number of
  *        completed burns, one full-output burn runs inside the
  *        configured overnight window (local time zone + DST), capped
@@ -40,7 +40,7 @@
  *      - All timing uses millis() and remains strictly nonâ€‘blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 
@@ -774,7 +774,19 @@ static int burnengine_computeContinuous() {
     double exhaustControlF = sys.exhaustSmoothF;
     double exhaustGuardF   = sys.exhaustRawF;
 
-    /* BOOST â†’ RAMP */
+    /* AUTO-START: Continuous mode runs a power-switched install. On
+     * power-up it must self-start a BOOST (no keypad press) and then run
+     * the whole burn off exhaust temp, stopping only when the main unit
+     * cuts power. IDLE is only reachable here at boot — Continuous never
+     * transitions to IDLE on its own, and burnengine_resetAlarms() forces
+     * SAFETY_OK before returning to IDLE — so a safety-latched shutdown
+     * cannot auto-restart the fire.
+     */
+    if (sys.burnState == BURN_IDLE) {
+        burnengine_startBoost();
+    }
+
+    /* BOOST → RAMP */
     if (sys.burnState == BURN_BOOST) {
         unsigned long elapsed = now - sys.boostStartMs;
         if (!sys.boostActive ||

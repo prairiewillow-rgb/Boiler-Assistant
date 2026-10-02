@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ EEPROM Storage Module (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ EEPROM Storage Module (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 
@@ -237,8 +237,9 @@ void eeprom_init() {
      *  SAFETY CLAMPS â€” PREVENT INVALID EEPROM VALUES
      * ======================================================== */
 
-    // BOOST TIME â€” critical for Guardian â†’ BOOST behavior
-    if (sys.boostTimeSeconds < 5 || sys.boostTimeSeconds > 600) {
+    // BOOST TIME — user-configured; 0 means skip straight to RAMP.
+    // Only reset to the default when the stored value is garbage.
+    if (sys.boostTimeSeconds < 0 || sys.boostTimeSeconds > 600) {
         sys.boostTimeSeconds = 30;   // safe default
     }
 

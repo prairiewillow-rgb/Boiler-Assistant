@@ -6,7 +6,7 @@ inline bool validExhaustSetpoint(int value) {
 }
 
 inline bool validBoostTime(int value) {
-    return value >= 5 && value <= 600;
+    return value >= 0 && value <= 600;
 }
 
 inline bool validDeadband(int value) {

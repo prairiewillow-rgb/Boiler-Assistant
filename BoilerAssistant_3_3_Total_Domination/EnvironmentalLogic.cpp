@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Environmental Logic Module (v3.3.4 "Total Domination")
+ *  Boiler Assistant â€“ Environmental Logic Module (v3.3.6 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *        main loop to maintain seasonal correctness.
  *
  *  Version:
- *      Boiler Assistant v3.3.4 "Total Domination"
+ *      Boiler Assistant v3.3.6 "Total Domination"
  * ============================================================
  */
 
