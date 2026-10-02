@@ -203,6 +203,26 @@ static void ota_recover(OTAUpdate& ota) {
     }
 }
 
+// A mid-download TLS read error (-26 and friends) is transient on the R4 bridge,
+// so retry the whole begin/cert/download sequence a few times before giving up.
+// Each failed attempt reboots the bridge via ota_recover(); wait for it to come
+// back and for WiFi to reconnect before starting the next attempt.
+static const uint8_t OTA_MAX_ATTEMPTS = 3;
+
+// ota_recover() reboots the bridge (ota.reset() -> ESP.restart()), so give the
+// bridge time to bounce its AT modem and rejoin WiFi before the next attempt.
+static bool ota_waitBridgeReady(unsigned long timeoutMs) {
+    delay(3000);  // let the rebooted bridge finish restarting
+    WDT.refresh();
+    unsigned long start = millis();
+    while (millis() - start < timeoutMs) {
+        WDT.refresh();
+        if (WiFi.status() == WL_CONNECTED) return true;
+        delay(250);
+    }
+    return WiFi.status() == WL_CONNECTED;
+}
+
 OtaInstallResult ota_install(void (*progress)(int percent)) {
     installError[0] = '\0';
 
@@ -220,54 +240,82 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
     WDT.refresh();
 
     OTAUpdate ota;
-    WDT.refresh();
-    int ret = ota.begin(OTA_LOCAL_PATH);
-    Serial.print("OTA begin: ");
-    Serial.println(ret);
-    if (ret != OTAUpdate::OTA_ERROR_NONE) {
-        snprintf(installError, sizeof(installError), "BEGIN ERR %d", ret);
-        ota_recover(ota);
-        return OTA_INSTALL_BEGIN_FAILED;
-    }
+    int size = -1;
 
-    WDT.refresh();
-    ret = ota.setCACert(OTA_ROOT_CA);
-    Serial.print("OTA setCACert: ");
-    Serial.println(ret);
-    if (ret != OTAUpdate::OTA_ERROR_NONE) {
-        snprintf(installError, sizeof(installError), "CERT ERR %d", ret);
-        ota_recover(ota);
-        return OTA_INSTALL_BEGIN_FAILED;
-    }
+    for (uint8_t attempt = 1; attempt <= OTA_MAX_ATTEMPTS; attempt++) {
+        Serial.print("OTA attempt ");
+        Serial.print(attempt);
+        Serial.print(" of ");
+        Serial.println(OTA_MAX_ATTEMPTS);
 
-    WDT.refresh();
-    int size = ota.startDownload(OTA_FILE_URL, OTA_LOCAL_PATH);
-    Serial.print("OTA startDownload: ");
-    Serial.println(size);
-    if (size <= 0) {
-        snprintf(installError, sizeof(installError), "START ERR %d", size);
-        ota_recover(ota);
-        return OTA_INSTALL_DOWNLOAD_FAILED;
-    }
-
-    unsigned long start = millis();
-    int received = 0;
-    while (received < size) {
         WDT.refresh();
-        received = ota.downloadProgress();
-        if (received < 0 || millis() - start > OTA_DOWNLOAD_TIMEOUT_MS) {
-            Serial.print("OTA download error: ");
-            Serial.println(received);
-            snprintf(installError, sizeof(installError), "DL ERR %d", received);
+        int ret = ota.begin(OTA_LOCAL_PATH);
+        Serial.print("OTA begin: ");
+        Serial.println(ret);
+        if (ret != OTAUpdate::OTA_ERROR_NONE) {
+            snprintf(installError, sizeof(installError), "BEGIN ERR %d", ret);
             ota_recover(ota);
-            return OTA_INSTALL_DOWNLOAD_FAILED;
+            if (attempt == OTA_MAX_ATTEMPTS) return OTA_INSTALL_BEGIN_FAILED;
+            ota_waitBridgeReady(15000);
+            continue;
         }
-        if (progress) progress((int)((long)received * 100L / size));
-        delay(200);
+
+        WDT.refresh();
+        ret = ota.setCACert(OTA_ROOT_CA);
+        Serial.print("OTA setCACert: ");
+        Serial.println(ret);
+        if (ret != OTAUpdate::OTA_ERROR_NONE) {
+            snprintf(installError, sizeof(installError), "CERT ERR %d", ret);
+            ota_recover(ota);
+            if (attempt == OTA_MAX_ATTEMPTS) return OTA_INSTALL_BEGIN_FAILED;
+            ota_waitBridgeReady(15000);
+            continue;
+        }
+
+        WDT.refresh();
+        size = ota.startDownload(OTA_FILE_URL, OTA_LOCAL_PATH);
+        Serial.print("OTA startDownload: ");
+        Serial.println(size);
+        if (size <= 0) {
+            snprintf(installError, sizeof(installError), "START ERR %d", size);
+            ota_recover(ota);
+            if (attempt == OTA_MAX_ATTEMPTS) return OTA_INSTALL_DOWNLOAD_FAILED;
+            ota_waitBridgeReady(15000);
+            continue;
+        }
+
+        unsigned long start = millis();
+        int received = 0;
+        bool downloadFailed = false;
+        while (received < size) {
+            WDT.refresh();
+            received = ota.downloadProgress();
+            if (received < 0 || millis() - start > OTA_DOWNLOAD_TIMEOUT_MS) {
+                Serial.print("OTA download error: ");
+                Serial.println(received);
+                snprintf(installError, sizeof(installError), "DL ERR %d", received);
+                downloadFailed = true;
+                break;
+            }
+            if (progress) progress((int)((long)received * 100L / size));
+            delay(200);
+        }
+
+        if (downloadFailed) {
+            ota_recover(ota);
+            if (attempt == OTA_MAX_ATTEMPTS) return OTA_INSTALL_DOWNLOAD_FAILED;
+            ota_waitBridgeReady(15000);
+            continue;
+        }
+
+        // Download completed cleanly.
+        break;
     }
 
+    if (size <= 0) return OTA_INSTALL_DOWNLOAD_FAILED;
+
     WDT.refresh();
-    ret = ota.verify();
+    int ret = ota.verify();
     Serial.print("OTA verify: ");
     Serial.println(ret);
     if (ret != OTAUpdate::OTA_ERROR_NONE) {
