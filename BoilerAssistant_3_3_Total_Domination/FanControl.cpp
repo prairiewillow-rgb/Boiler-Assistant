@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Fan Control Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Fan Control Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -14,25 +14,26 @@
  *    IDLE, and SAFETY transitions.
  *
  *    Responsibilities:
- *      • Clamp Mode (fan always on within min/max limits)
- *      • Fan-off Mode with hysteresis and re-enable thresholds
- *      • BOOST and SAFETY overrides
- *      • State-transition smoothing between RAMP/HOLD
- *      • Damper pre-fan delay (5 s) and 2-second startup kick
- *      • After the kick, ramps down from 100% toward the target
- *        (avoids the low-speed stall point)
- *      • Gradual ramping toward the requested fan speed
- *      • Exhaust-probe fallback at max clamp fan output
- *      • Full SystemData migration (no legacy globals)
+ *      â€¢ Clamp Mode (fan always on within min/max limits)
+ *      â€¢ Fan-off Mode with hysteresis and re-enable thresholds
+ *      â€¢ BOOST and SAFETY overrides
+ *      â€¢ State-transition smoothing between RAMP/HOLD
+ *      â€¢ Damper pre-fan delay (5 s)
+ *      â€¢ Gradual ramping toward the requested fan speed (no startup
+ *        kick: most boilers hold flue temp on natural draft through
+ *        the deadband, so a full-power kick only causes overshoot
+ *        and rapid on/off hunting)
+ *      â€¢ Exhaust-probe fallback at max clamp fan output
+ *      â€¢ Full SystemData migration (no legacy globals)
  *
  *  Architectural Notes:
  *      - FanControl owns all fan smoothing and hysteresis logic.
  *      - SystemData (sys.*) is the single source of truth.
  *      - This module never touches UI, EEPROM, or WiFi logic.
- *      - Output is always deterministic and operator‑visible.
+ *      - Output is always deterministic and operatorâ€‘visible.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -50,10 +51,8 @@ static BurnState prevBurnState = BURN_IDLE;
 
 // Ramp limiter memory
 static int lastOutput = 0;
-static unsigned long fanKickUntil = 0;
 static unsigned long lastRampMs = 0;
 static unsigned long fanStartDelayUntil = 0;
-static const unsigned long FAN_START_KICK_MS = 2000UL;
 static const unsigned long FAN_DAMPER_DELAY_MS = 5000UL;
 static const unsigned long FAN_RAMP_INTERVAL_MS = 100UL;
 static const int FAN_RAMP_STEP_PERCENT = 3;
@@ -73,30 +72,12 @@ void fancontrol_init() {
     fanOn         = false;
     prevBurnState = sys.burnState;
     lastOutput    = 0;
-    fanKickUntil  = 0;
     lastRampMs    = millis();
     fanStartDelayUntil = 0;
 }
 
 static int fancontrol_rampTo(int target) {
     unsigned long now = millis();
-
-    if (lastOutput == 0 && fanKickUntil == 0) {
-        fanKickUntil = now + FAN_START_KICK_MS;
-        lastOutput = 100;
-        lastRampMs = now;
-        return 100;
-    }
-
-    if (fanKickUntil != 0) {
-        if ((long)(now - fanKickUntil) < 0) return 100;
-        fanKickUntil = 0;
-        lastRampMs = now;
-        // After the kick, ramp DOWN from 100% toward the target (3.2 behavior)
-        // so the motor never drops straight to a low speed where it could stall.
-        lastOutput = 100;
-        return lastOutput;
-    }
 
     bool slowUp = (sys.burnState == BURN_HOLD && target > lastOutput);
     unsigned long intervalMs = slowUp ? FAN_HOLD_RAMP_UP_INTERVAL_MS : FAN_RAMP_INTERVAL_MS;
@@ -133,7 +114,6 @@ static void fancontrol_handleStateChange() {
         if (enteringActiveState && !wasActiveState) {
             fanStartDelayUntil = millis() + FAN_DAMPER_DELAY_MS;
             lastOutput = 0;
-            fanKickUntil = 0;
         }
 
         // Reset smoothing when leaving HOLD
@@ -165,7 +145,6 @@ int fan_compute(int demand) {
     if (fanStartDelayUntil != 0) {
         if ((long)(millis() - fanStartDelayUntil) < 0) {
             lastOutput = 0;
-            fanKickUntil = 0;
             return 0;
         }
         fanStartDelayUntil = 0;
@@ -180,7 +159,6 @@ int fan_compute(int demand) {
         int fan = (sys.burnState == BURN_BOOST) ? 100 : sys.clampMaxPercent;
         fanOn = true;
         lastOutput = fan;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return fan;
     }
@@ -188,7 +166,6 @@ int fan_compute(int demand) {
     if (sys.safetyState != SAFETY_OK) {
         fanOn = false;
         lastOutput = 0;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return 0;
     }
@@ -196,7 +173,6 @@ int fan_compute(int demand) {
     if (sys.emberGuardianLatched || sys.burnState == BURN_EMBER_GUARD) {
         fanOn = false;
         lastOutput = 0;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return 0;
     }
@@ -205,7 +181,6 @@ int fan_compute(int demand) {
     if (sys.burnState == BURN_BOOST) {
         fanOn = true;
         lastOutput = 100;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return 100;
     }
@@ -213,7 +188,6 @@ int fan_compute(int demand) {
     if (sys.burnState == BURN_IDLE) {
         fanOn = false;
         lastOutput = 0;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return 0;
     }
@@ -253,7 +227,6 @@ int fan_compute(int demand) {
     // Output
     if (!fanOn) {
         lastOutput = 0;
-        fanKickUntil = 0;
         lastRampMs = millis();
         return 0;
     }

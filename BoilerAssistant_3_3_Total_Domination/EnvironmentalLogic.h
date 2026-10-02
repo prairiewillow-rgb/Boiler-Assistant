@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Environmental Logic (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Environmental Logic (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -11,12 +11,12 @@
  *      / seasonal logic subsystem.
  *
  *      v3.3 extends the active environment state to drive:
- *          • Exhaust setpoint (per season)
- *          • Max fan clamp (per season)
- *          • Tank HIGH / LOW water setpoints (per season)
+ *          â€¢ Exhaust setpoint (per season)
+ *          â€¢ Max fan clamp (per season)
+ *          â€¢ Tank HIGH / LOW water setpoints (per season)
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -27,7 +27,7 @@
 #include "SystemState.h"   // EnvSeason now defined here
 
 /* ============================================================
- *  COMPATIBILITY SHIM (v2.2 → v3.3.2)
+ *  COMPATIBILITY SHIM (v2.2 â†’ v3.3.4)
  * ============================================================ */
 #ifndef ENV_SEASON_NONE
 #define ENV_SEASON_NONE ((EnvSeason)255)
@@ -73,7 +73,7 @@ void env_logic_init();
  *
  * nowMs:
  *      Current millis() timestamp, used for any future
- *      time‑based lockouts or hysteresis. v3.0 may ignore
+ *      timeâ€‘based lockouts or hysteresis. v3.0 may ignore
  *      it internally but the parameter is kept for ABI
  *      stability and future expansion.
  */

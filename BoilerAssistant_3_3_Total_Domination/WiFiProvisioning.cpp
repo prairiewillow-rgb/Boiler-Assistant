@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – WiFi Provisioning Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ WiFi Provisioning Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -14,11 +14,11 @@
  *    onboarding.
  *
  *    Responsibilities:
- *      • STA‑first connection using RuntimeCredentials
- *      • Automatic AP fallback with HTML provisioning portal
- *      • Safe credential parsing + EEPROM persistence
- *      • Factory reset with full credential wipe
- *      • Export MQTT credentials for MQTTClient.cpp
+ *      â€¢ STAâ€‘first connection using RuntimeCredentials
+ *      â€¢ Automatic AP fallback with HTML provisioning portal
+ *      â€¢ Safe credential parsing + EEPROM persistence
+ *      â€¢ Factory reset with full credential wipe
+ *      â€¢ Export MQTT credentials for MQTTClient.cpp
  *
  *    Architectural Notes:
  *      - No blocking delays beyond required WiFi operations
@@ -27,7 +27,7 @@
  *      - AP mode is authoritative when STA fails or no creds exist
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -161,12 +161,12 @@ void wifi_prov_init() {
             delay(200);
         }
 
-        Serial.println("WiFiProvisioning: Runtime STA failed → AP mode");
+        Serial.println("WiFiProvisioning: Runtime STA failed â†’ AP mode");
         startAP();
         return;
     }
 
-    Serial.println("WiFiProvisioning: No runtime credentials → AP mode");
+    Serial.println("WiFiProvisioning: No runtime credentials â†’ AP mode");
     startAP();
 }
 

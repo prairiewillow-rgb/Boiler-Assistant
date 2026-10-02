@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – WiFi JSON API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ WiFi JSON API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.h
  *  Author: The Architect Collective
@@ -11,15 +11,15 @@
  *    Public interface for the WiFi + HTTP JSON API subsystem.
  *    This module exposes deterministic entry points for:
  *
- *      • wifiapi_init() — initialize WiFi hardware + HTTP server
- *      • wifiapi_loop() — non‑blocking retry + request handler
+ *      â€¢ wifiapi_init() â€” initialize WiFi hardware + HTTP server
+ *      â€¢ wifiapi_loop() â€” nonâ€‘blocking retry + request handler
  *
  *    Responsibilities:
- *      - Maintain non‑blocking WiFi auto‑retry logic
+ *      - Maintain nonâ€‘blocking WiFi autoâ€‘retry logic
  *      - Serve lightweight JSON endpoints for:
- *          • Live telemetry
- *          • Settings
- *          • Network diagnostics
+ *          â€¢ Live telemetry
+ *          â€¢ Settings
+ *          â€¢ Network diagnostics
  *      - Integrate cleanly with MQTT without blocking
  *
  *    Architectural Notes:
@@ -28,18 +28,18 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
 #pragma once
 
-// Initialize WiFi + HTTP JSON API (non‑blocking)
+// Initialize WiFi + HTTP JSON API (nonâ€‘blocking)
 void wifiapi_init();
 
 // Releases the listening socket so the WiFi bridge is free (used before OTA).
 void wifiapi_stop();
 
-// Run WiFi retry + HTTP server loop (non‑blocking)
+// Run WiFi retry + HTTP server loop (nonâ€‘blocking)
 void wifiapi_loop();
 

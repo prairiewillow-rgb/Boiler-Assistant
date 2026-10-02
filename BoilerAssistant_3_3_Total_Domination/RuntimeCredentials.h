@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Runtime Credentials API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Runtime Credentials API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: RuntimeCredentials.h
  *  Author: The Architect Collective
@@ -12,17 +12,17 @@
  *    MQTT provisioning subsystem. This header exposes the POD struct
  *    and the global instance used by:
  *
- *      • WiFiProvisioning
- *      • EEPROMStorage
- *      • MQTTClient
+ *      â€¢ WiFiProvisioning
+ *      â€¢ EEPROMStorage
+ *      â€¢ MQTTClient
  *
  *    Architectural Notes:
  *      - This struct is stored directly in EEPROM.
- *      - No logic belongs here — only the definition and extern.
- *      - All fields are fixed‑size arrays for deterministic storage.
+ *      - No logic belongs here â€” only the definition and extern.
+ *      - All fields are fixedâ€‘size arrays for deterministic storage.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

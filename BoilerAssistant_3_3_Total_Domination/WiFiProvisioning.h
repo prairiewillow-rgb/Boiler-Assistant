@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – WiFi Provisioning API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ WiFi Provisioning API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.h
  *  Author: The Architect Collective
@@ -11,11 +11,11 @@
  *    Public interface for the WiFi provisioning subsystem.
  *    This module exposes deterministic entry points for:
  *
- *      • wifi_prov_init()  — STA‑first initialization with AP fallback
- *      • wifi_prov_loop()  — AP‑mode HTML portal handler
- *      • wifi_prov_isAPMode() — query active provisioning mode
- *      • wifi_prov_has_credentials() — query stored credentials
- *      • wifi_prov_factoryReset() — full credential wipe + reboot
+ *      â€¢ wifi_prov_init()  â€” STAâ€‘first initialization with AP fallback
+ *      â€¢ wifi_prov_loop()  â€” APâ€‘mode HTML portal handler
+ *      â€¢ wifi_prov_isAPMode() â€” query active provisioning mode
+ *      â€¢ wifi_prov_has_credentials() â€” query stored credentials
+ *      â€¢ wifi_prov_factoryReset() â€” full credential wipe + reboot
  *
  *    Architectural Notes:
  *      - All implementation resides in WiFiProvisioning.cpp
@@ -23,7 +23,7 @@
  *      - SystemData is the single source of truth for WiFi status
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

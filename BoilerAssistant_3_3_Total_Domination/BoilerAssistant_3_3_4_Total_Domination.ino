@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Main Firmware (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Main Firmware (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BoilerAssistant_3_3_Total_Domination.ino
  *  Author: The Architect Collective
@@ -9,7 +9,7 @@
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.2 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.4 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Deterministic, non-blocking main loop
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -42,7 +42,7 @@
  *      - 2-second startup kick before returning to requested speed
  *      - Zero-cross phase control with automatic PWM fallback
  *
- *  v3.3.2 Additions:
+ *  v3.3.4 Additions:
  *      - Damper pre-fan delay reduced from 10 s to 5 s
  *      - Push notifications via ntfy (high temp, tank fault,
  *        exhaust fault, Ember Guardian, plus a dashboard test)
@@ -58,7 +58,7 @@
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -86,7 +86,7 @@
 #include "PushNotify.h"
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 → v3.3.2)
+ *  COMPATIBILITY SHIMS (v2.2 â†’ v3.3.4)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8
@@ -150,7 +150,7 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.2 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.4 Boot ===");
 
     Wire.begin();
     Wire.setClock(400000);
@@ -224,7 +224,7 @@ void loop() {
         lastProbeScan = now;
     }
 
-    // 2) Burn engine – exhaust pipeline
+    // 2) Burn engine â€“ exhaust pipeline
     double rawExh = exhaust_readF_cached();
     sys.exhaustRawF = rawExh;                    // live raw flue temp for Guardian
     double smoothedExh = smoothExhaustF(rawExh);

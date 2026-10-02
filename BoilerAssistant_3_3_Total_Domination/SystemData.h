@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – System Data API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ System Data API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.h
  *  Author: The Architect Collective
@@ -8,26 +8,26 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Defines the SystemData structure — the single source of truth
+ *    Defines the SystemData structure â€” the single source of truth
  *    for all runtime state in the Boiler Assistant controller.
  *    Every subsystem (UI, MQTT, sensors, burn engine, seasonal
  *    logic, EEPROM) reads and writes through this deterministic,
- *    operator‑visible data model.
+ *    operatorâ€‘visible data model.
  *
  *    Responsibilities:
- *      • Own all live sensor values
- *      • Own all operator‑configurable parameters
- *      • Own all seasonal thresholds and 6‑parameter profiles
- *      • Own all burn engine timers and state flags
- *      • Provide UI pointer helpers for seasonal editing
+ *      â€¢ Own all live sensor values
+ *      â€¢ Own all operatorâ€‘configurable parameters
+ *      â€¢ Own all seasonal thresholds and 6â€‘parameter profiles
+ *      â€¢ Own all burn engine timers and state flags
+ *      â€¢ Provide UI pointer helpers for seasonal editing
  *
  *    Architectural Notes:
- *      - No logic belongs here — only data and declarations.
+ *      - No logic belongs here â€” only data and declarations.
  *      - All defaults are initialized in SystemData.cpp.
  *      - All modules must treat SystemData as authoritative.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -139,7 +139,7 @@ struct SystemData
     int16_t envSetpointExtremeF;
 
     /* ============================================================
-     *  FULL 6‑PARAMETER SEASONAL SYSTEM
+     *  FULL 6â€‘PARAMETER SEASONAL SYSTEM
      * ============================================================ */
 
     // Tank High

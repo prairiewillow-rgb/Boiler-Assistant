@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Sensor API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Sensor API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.h
  *  Author: The Architect Collective
@@ -11,9 +11,9 @@
  *    Public interface for the unified sensor subsystem. Provides
  *    deterministic access to:
  *
- *      • MAX31855 exhaust thermocouple (cached reads)
- *      • DS18B20 water probes (scan + read)
- *      • BME280 outdoor environmental sensor
+ *      â€¢ MAX31855 exhaust thermocouple (cached reads)
+ *      â€¢ DS18B20 water probes (scan + read)
+ *      â€¢ BME280 outdoor environmental sensor
  *
  *    Architectural Notes:
  *      - All live values are written directly into SystemData (sys.*)
@@ -22,7 +22,7 @@
  *      - All implementation resides in Sensors.cpp
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

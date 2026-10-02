@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Keypad I²C Driver (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Keypad IÂ²C Driver (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.cpp
  *  Author: The Architect Collective
@@ -8,27 +8,27 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Non‑blocking I²C keypad scanner for the 4×4 matrix keypad
- *    connected through a PCF8574‑style expander. This module
+ *    Nonâ€‘blocking IÂ²C keypad scanner for the 4Ã—4 matrix keypad
+ *    connected through a PCF8574â€‘style expander. This module
  *    implements deterministic keypad behavior under the Total
  *    Domination Architecture (TDA), ensuring stable operator
- *    input without ever blocking the real‑time control loop.
+ *    input without ever blocking the realâ€‘time control loop.
  *
  *    Features:
- *      • 4×4 matrix scan (rows driven low, columns read)
- *      • Debounce filtering (40 ms stable requirement)
- *      • Stable key reporting (no repeats until release)
- *      • Zero blocking delays (only µs‑level settling)
- *      • Fully compatible with deterministic main loop timing
+ *      â€¢ 4Ã—4 matrix scan (rows driven low, columns read)
+ *      â€¢ Debounce filtering (40 ms stable requirement)
+ *      â€¢ Stable key reporting (no repeats until release)
+ *      â€¢ Zero blocking delays (only Âµsâ€‘level settling)
+ *      â€¢ Fully compatible with deterministic main loop timing
  *
  *    Notes:
  *      - scanMatrix() performs raw hardware scanning
  *      - keypad_read() applies debounce + stable reporting
  *      - No dynamic allocation, no Strings, no blocking calls
- *      - All timing uses millis() and remains non‑blocking
+ *      - All timing uses millis() and remains nonâ€‘blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -71,7 +71,7 @@ void keypad_init(TwoWire &bus) {
  *  Behavior:
  *      - Drives one row LOW at a time
  *      - Reads column bits from expander
- *      - 300 µs settling delay ensures stable read
+ *      - 300 Âµs settling delay ensures stable read
  * ============================================================ */
 
 static char scanMatrix() {

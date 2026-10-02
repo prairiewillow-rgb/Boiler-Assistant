@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ EEPROM Storage API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.h
  *  Author: The Architect Collective
@@ -11,12 +11,12 @@
  *    Public interface for all EEPROM-backed configuration storage.
  *    This module exposes deterministic save/load entry points for:
  *
- *      • Combustion settings (setpoint, deadband, clamps)
- *      • Ember Guardian thresholds and timer
- *      • Environmental logic (season starts, hysteresis, setpoints)
- *      • Boiler control (tank low/high, run mode)
- *      • Probe role mapping
- *      • Runtime WiFi credentials
+ *      â€¢ Combustion settings (setpoint, deadband, clamps)
+ *      â€¢ Ember Guardian thresholds and timer
+ *      â€¢ Environmental logic (season starts, hysteresis, setpoints)
+ *      â€¢ Boiler control (tank low/high, run mode)
+ *      â€¢ Probe role mapping
+ *      â€¢ Runtime WiFi credentials
  *
  *    All persistent values follow the Total Domination Architecture:
  *      - SystemData is the single source of truth
@@ -29,7 +29,7 @@
  *      - No UI or control logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -74,7 +74,7 @@ void eeprom_saveEnvSeasonStarts();
 void eeprom_saveEnvSeasonHyst();
 void eeprom_saveEnvSeasonSetpoints();
 
-/* NEW — seasonal TankHigh/TankLow/ClampMax */
+/* NEW â€” seasonal TankHigh/TankLow/ClampMax */
 void eeprom_saveEnvSeasonTankValues();
 void eeprom_saveEnvSeasonClampValues();
 void eeprom_saveSelfClean();

@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ EEPROM Storage Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -11,12 +11,12 @@
  *    EEPROM-backed configuration storage for the Boiler Assistant
  *    controller. This module owns all persistent settings for:
  *
- *      • Combustion parameters (setpoint, deadband, clamps)
- *      • Ember Guardian thresholds and timer
- *      • Environmental logic (season starts, hysteresis, setpoints)
- *      • Boiler control (tank low/high, run mode)
- *      • Probe role mapping
- *      • Runtime WiFi credentials
+ *      â€¢ Combustion parameters (setpoint, deadband, clamps)
+ *      â€¢ Ember Guardian thresholds and timer
+ *      â€¢ Environmental logic (season starts, hysteresis, setpoints)
+ *      â€¢ Boiler control (tank low/high, run mode)
+ *      â€¢ Probe role mapping
+ *      â€¢ Runtime WiFi credentials
  *
  *    Implements deterministic read/write helpers for multibyte
  *    values and enforces strict safety clamps to prevent invalid
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -134,7 +134,7 @@ static void eeprom_saveDefaultConfig() {
 }
 
 /* ============================================================
- *  INIT — LOAD ALL SETTINGS YOU SAVE
+ *  INIT â€” LOAD ALL SETTINGS YOU SAVE
  * ============================================================ */
 
 void eeprom_init() {
@@ -234,10 +234,10 @@ void eeprom_init() {
     }
 
     /* ========================================================
-     *  SAFETY CLAMPS — PREVENT INVALID EEPROM VALUES
+     *  SAFETY CLAMPS â€” PREVENT INVALID EEPROM VALUES
      * ======================================================== */
 
-    // BOOST TIME — critical for Guardian → BOOST behavior
+    // BOOST TIME â€” critical for Guardian â†’ BOOST behavior
     if (sys.boostTimeSeconds < 5 || sys.boostTimeSeconds > 600) {
         sys.boostTimeSeconds = 30;   // safe default
     }

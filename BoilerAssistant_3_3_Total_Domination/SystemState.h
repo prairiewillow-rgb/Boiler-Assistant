@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – System State API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ System State API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemState.h
  *  Author: The Architect Collective
@@ -12,20 +12,20 @@
  *    Boiler Assistant controller. This header provides the
  *    authoritative definitions for:
  *
- *      • Burn engine states
- *      • Safety states
- *      • Run modes
- *      • Environmental seasons
- *      • UI state machine
- *      • Probe roles
+ *      â€¢ Burn engine states
+ *      â€¢ Safety states
+ *      â€¢ Run modes
+ *      â€¢ Environmental seasons
+ *      â€¢ UI state machine
+ *      â€¢ Probe roles
  *
  *    Architectural Notes:
- *      - No logic belongs here — only enums and constants.
+ *      - No logic belongs here â€” only enums and constants.
  *      - SystemData and SystemState.cpp implement behavior.
  *      - All modules must treat these enums as canonical.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

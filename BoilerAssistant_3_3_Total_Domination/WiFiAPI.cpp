@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – WiFi JSON API Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ WiFi JSON API Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.cpp
  *  Author: The Architect Collective
@@ -8,18 +8,18 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Deterministic, non‑blocking WiFi + HTTP JSON API subsystem
+ *    Deterministic, nonâ€‘blocking WiFi + HTTP JSON API subsystem
  *    for the UNO R4 WiFi. Implements the Total Domination
- *    Architecture (TDA) for all network‑side operator access.
+ *    Architecture (TDA) for all networkâ€‘side operator access.
  *
  *    Responsibilities:
- *      • Safe WiFi auto‑retry (5s cooldown)
- *      • Minimal HTTP server on port 80
- *      • JSON endpoints:
+ *      â€¢ Safe WiFi autoâ€‘retry (5s cooldown)
+ *      â€¢ Minimal HTTP server on port 80
+ *      â€¢ JSON endpoints:
  *          - GET  /api/state
  *          - GET  /api/settings
  *          - POST /api/set
- *      • Remote write‑back to SystemData with remoteChanged flag
+ *      â€¢ Remote writeâ€‘back to SystemData with remoteChanged flag
  *
  *    Architectural Notes:
  *      - No blocking delays
@@ -28,7 +28,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -535,7 +535,7 @@ void wifiapi_init() {
     const char* pass = getWifiPASS();
 
     if (ssid[0] == 0) {
-        Serial.println("WiFiAPI: no credentials → skipping");
+        Serial.println("WiFiAPI: no credentials â†’ skipping");
         sys.wifiOK = false;
         return;
     }

@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – UI Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ UI Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -8,25 +8,25 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Full keypad‑driven LCD UI subsystem for the Boiler Assistant.
+ *    Full keypadâ€‘driven LCD UI subsystem for the Boiler Assistant.
  *    Implements deterministic operator interaction for:
- *      • Home screen
- *      • Combustion menus
- *      • Tank setpoints
- *      • Environmental seasonal system
- *      • Probe role assignment
- *      • Networking & provisioning
- *      • Safety lockouts and Guardian logic
+ *      â€¢ Home screen
+ *      â€¢ Combustion menus
+ *      â€¢ Tank setpoints
+ *      â€¢ Environmental seasonal system
+ *      â€¢ Probe role assignment
+ *      â€¢ Networking & provisioning
+ *      â€¢ Safety lockouts and Guardian logic
  *
  *    Architectural Notes:
- *      - No control logic lives here — UI only.
+ *      - No control logic lives here â€” UI only.
  *      - All state is read/written through SystemData (sys.*).
  *      - All EEPROM writes are delegated to EEPROMStorage.
- *      - Rendering is strictly 20×4 LCD, deterministic, no animations
+ *      - Rendering is strictly 20Ã—4 LCD, deterministic, no animations
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -45,7 +45,7 @@
 #include <EEPROM.h>
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 → v3.3.2)
+ *  COMPATIBILITY SHIMS (v2.2 â†’ v3.3.4)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8

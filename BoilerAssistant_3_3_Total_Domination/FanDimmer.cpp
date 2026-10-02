@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Fan Dimmer Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Fan Dimmer Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.cpp
  *  Author: The Architect Collective
@@ -15,10 +15,10 @@
  *    PWM so existing installations keep working unchanged.
  *
  *    Responsibilities:
- *      • Zero-cross detection with half-cycle validation
- *      • Phase-fired PSM pulses timed from each zero-cross
- *      • Automatic fallback to analogWrite PWM when Z-C is absent
- *      • Non-blocking, timer/interrupt-driven output
+ *      â€¢ Zero-cross detection with half-cycle validation
+ *      â€¢ Phase-fired PSM pulses timed from each zero-cross
+ *      â€¢ Automatic fallback to analogWrite PWM when Z-C is absent
+ *      â€¢ Non-blocking, timer/interrupt-driven output
  *
  *  Architectural Notes:
  *      - This module owns the physical fan output pin only.
@@ -26,7 +26,7 @@
  *        BurnEngine; both call fan_dimmer_setPercent().
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -35,8 +35,13 @@
 #include <FspTimer.h>
 
 static const float PHASE_TIMER_HZ = 20000.0f;
-static const uint32_t PSM_PULSE_WIDTH_US = 50UL;
-static const uint32_t MIN_FIRE_DELAY_US = 200UL;
+// 100us gate pulse: on an inductive motor load the triac needs enough
+// time at sufficient instantaneous voltage to reach latching current
+// before the gate pulse ends, or it snaps back off and the fan just hums.
+static const uint32_t PSM_PULSE_WIDTH_US = 100UL;
+// Never fire earlier than 1ms after zero-cross (~65V instantaneous on
+// 120V mains). Firing closer to the cross cannot latch the triac.
+static const uint32_t MIN_FIRE_DELAY_US = 1000UL;
 static const uint32_t END_GUARD_US = 300UL;
 static const uint32_t ZC_MIN_HALF_CYCLE_US = 7000UL;
 static const uint32_t ZC_MAX_HALF_CYCLE_US = 11000UL;
@@ -99,7 +104,16 @@ static void fan_phaseTimerCallback(timer_callback_args_t*) {
         digitalWrite(PIN_FAN_PWM, LOW);
 
         uint8_t percent = requestedPercent;
-        if (percent > 0) {
+        if (percent >= 100) {
+            // Full power: hold the gate HIGH for the entire half-cycle.
+            // 100% would otherwise fire 1ms after the zero-cross where
+            // voltage is too low to latch the triac on a motor load â€”
+            // the fan hums but never spins. A solid gate makes 100%
+            // behave like a hard-wired connection (matches the ZC
+            // timeout fallback above).
+            digitalWrite(PIN_FAN_PWM, HIGH);
+            firePending = false;
+        } else if (percent > 0) {
             uint32_t halfCycleUs = measuredHalfCycleUs;
             uint32_t maxDelayUs = halfCycleUs > END_GUARD_US
                                       ? halfCycleUs - END_GUARD_US

@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – MQTT Client API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ MQTT Client API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTT_Client.h
  *  Author: The Architect Collective
@@ -14,11 +14,11 @@
  *    maintain MQTT connectivity and dispatch inbound commands.
  *
  *    Responsibilities:
- *      • mqtt_init() — initialize WiFi + MQTT client
- *      • mqtt_loop() — fully non‑blocking RX/TX handler
- *      • Auto‑reconnect logic (rate‑limited, deterministic)
- *      • Home Assistant Discovery support
- *      • Periodic telemetry publishers (state, settings, water, outdoor)
+ *      â€¢ mqtt_init() â€” initialize WiFi + MQTT client
+ *      â€¢ mqtt_loop() â€” fully nonâ€‘blocking RX/TX handler
+ *      â€¢ Autoâ€‘reconnect logic (rateâ€‘limited, deterministic)
+ *      â€¢ Home Assistant Discovery support
+ *      â€¢ Periodic telemetry publishers (state, settings, water, outdoor)
  *
  *    Architectural Notes:
  *      - All implementation resides in MQTTClient.cpp
@@ -27,7 +27,7 @@
  *      - No burn logic, UI logic, or EEPROM logic belongs here
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -40,7 +40,7 @@ void mqtt_init();
 // Closes the broker connection so the WiFi bridge is free (used before OTA).
 void mqtt_stop();
 
-// Non‑blocking MQTT loop (called from main loop)
+// Nonâ€‘blocking MQTT loop (called from main loop)
 void mqtt_loop();
 
 #endif

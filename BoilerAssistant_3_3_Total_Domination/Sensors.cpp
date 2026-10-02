@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Sensor Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Sensor Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.cpp
  *  Author: The Architect Collective
@@ -11,14 +11,14 @@
  *    Unified sensor subsystem for the Boiler Assistant controller.
  *    Implements deterministic acquisition of:
  *
- *      • MAX31855 exhaust thermocouple
- *      • DS18B20 water probes (up to MAX_WATER_PROBES)
- *      • BME280 outdoor environmental sensor
+ *      â€¢ MAX31855 exhaust thermocouple
+ *      â€¢ DS18B20 water probes (up to MAX_WATER_PROBES)
+ *      â€¢ BME280 outdoor environmental sensor
  *
  *    All live values are written directly into SystemData (sys.*),
  *    following the Total Domination Architecture (TDA):
  *      - No dynamic allocation
- *      - No blocking delays beyond sensor‑required µs waits
+ *      - No blocking delays beyond sensorâ€‘required Âµs waits
  *      - Deterministic smoothing and caching for exhaust readings
  *      - Probe roles resolved through sys.probeRoleMap
  *
@@ -29,7 +29,7 @@
  *      - This module contains no UI, MQTT, or EEPROM logic
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Runtime Credentials Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Runtime Credentials Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: RuntimeCredentials.cpp
  *  Author: The Architect Collective
@@ -19,7 +19,7 @@
  *      - No initialization or logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

@@ -1,30 +1,30 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Keypad I²C API (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Keypad IÂ²C API (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *      Public interface for the 4×4 matrix keypad driver using
- *      an I²C expander (PCF8574‑style). Provides:
+ *      Public interface for the 4Ã—4 matrix keypad driver using
+ *      an IÂ²C expander (PCF8574â€‘style). Provides:
  *
- *          • keypad_init() — attach TwoWire bus
- *          • keypad_read() — debounced, stable key events
+ *          â€¢ keypad_init() â€” attach TwoWire bus
+ *          â€¢ keypad_read() â€” debounced, stable key events
  *
  *      Notes:
- *          - No blocking delays (only µs‑level settling in .cpp)
+ *          - No blocking delays (only Âµsâ€‘level settling in .cpp)
  *          - Returns a single keypress event per press
  *          - Zero dynamic allocation, zero Strings
- *          - Fully real‑time safe for the main loop
+ *          - Fully realâ€‘time safe for the main loop
  *
- *  v2.3‑Environmental Notes:
- *      - Updated header to match v2.3‑Environmental identity
+ *  v2.3â€‘Environmental Notes:
+ *      - Updated header to match v2.3â€‘Environmental identity
  *      - API unchanged and fully backward compatible
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -33,7 +33,7 @@
 
 #include <Wire.h>
 
-// Initialize keypad driver with I²C bus reference
+// Initialize keypad driver with IÂ²C bus reference
 void keypad_init(TwoWire &bus);
 
 // Read a single debounced key event (returns 0 if none)

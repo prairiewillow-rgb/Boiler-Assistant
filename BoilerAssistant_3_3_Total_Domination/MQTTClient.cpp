@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – MQTT Client Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ MQTT Client Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -10,24 +10,24 @@
  *  Description:
  *    Deterministic MQTT telemetry + command subsystem for the
  *    Boiler Assistant controller. Implements the Total Domination
- *    Architecture (TDA) for all network‑side communication.
+ *    Architecture (TDA) for all networkâ€‘side communication.
  *
  *    Responsibilities:
- *      • Non‑blocking MQTT RX/TX loop
- *      • State, settings, water, and outdoor telemetry topics
- *      • Home Assistant auto‑discovery publishing
- *      • CRC‑validated remote command handling
- *      • Full SystemData integration (no legacy globals)
+ *      â€¢ Nonâ€‘blocking MQTT RX/TX loop
+ *      â€¢ State, settings, water, and outdoor telemetry topics
+ *      â€¢ Home Assistant autoâ€‘discovery publishing
+ *      â€¢ CRCâ€‘validated remote command handling
+ *      â€¢ Full SystemData integration (no legacy globals)
  *
  *    Architectural Notes:
- *      - All MQTT operations are non‑blocking
+ *      - All MQTT operations are nonâ€‘blocking
  *      - No dynamic allocation beyond ArduinoJson buffers
  *      - SystemData is the single source of truth
  *      - No burn logic, UI logic, or EEPROM logic lives here
- *      - Reconnect logic is rate‑limited and deterministic
+ *      - Reconnect logic is rateâ€‘limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -461,7 +461,7 @@ static void mqtt_publishOutdoor() {
 static void publishDiscovery() {
 
     publishDiscoverySensor("exhaust", "Exhaust Temp", TOPIC_STATE,
-                           "{{value_json.exhaust}}", "°F", "temperature", "mdi:fire");
+                           "{{value_json.exhaust}}", "Â°F", "temperature", "mdi:fire");
 
     publishDiscoverySensor("fan", "Fan Speed", TOPIC_STATE,
                            "{{value_json.fan}}", "%", nullptr, "mdi:fan");
@@ -479,7 +479,7 @@ static void publishDiscovery() {
                            "{{value_json.state_text}}", "", nullptr, "mdi:fire");
 
     // ============================================================
-    // Ember Guardian v3.3 — ONLY new fields
+    // Ember Guardian v3.3 â€” ONLY new fields
     // ============================================================
 
     publishDiscoverySensor("ember_guardian_active", "Ember Guardian Active",
@@ -513,7 +513,7 @@ static void publishDiscovery() {
         snprintf(tpl, sizeof(tpl), "{{value_json.water[%d]}}", i);
 
         publishDiscoverySensor(obj, name, TOPIC_WATER,
-                               tpl, "°F", "temperature", "mdi:coolant-temperature");
+                               tpl, "Â°F", "temperature", "mdi:coolant-temperature");
     }
 
     // ============================================================
@@ -521,7 +521,7 @@ static void publishDiscovery() {
     // ============================================================
 
     publishDiscoverySensor("outdoor_temp", "Outdoor Temp", TOPIC_OUTDOOR,
-                           "{{value_json.temp}}", "°F", "temperature", "mdi:thermometer");
+                           "{{value_json.temp}}", "Â°F", "temperature", "mdi:thermometer");
 
     publishDiscoverySensor("outdoor_hum", "Outdoor Humidity", TOPIC_OUTDOOR,
                            "{{value_json.hum}}", "%", "humidity", "mdi:water-percent");
@@ -535,7 +535,7 @@ static void publishDiscovery() {
 
     publishDiscoveryNumber("setpoint", "Exhaust Setpoint",
                            "boiler/cmd/setpoint", TOPIC_SETTINGS,
-                           "°F", 200, 900, 1, "temperature", "mdi:fire");
+                           "Â°F", 200, 900, 1, "temperature", "mdi:fire");
 
     publishDiscoveryNumber("boost", "Boost Time",
                            "boiler/cmd/boost", TOPIC_SETTINGS,
@@ -543,7 +543,7 @@ static void publishDiscovery() {
 
     publishDiscoveryNumber("deadband", "Deadband",
                            "boiler/cmd/deadband", TOPIC_SETTINGS,
-                           "°F", 1, 100, 1, nullptr, "mdi:arrow-expand-vertical");
+                           "Â°F", 1, 100, 1, nullptr, "mdi:arrow-expand-vertical");
 
     publishDiscoveryNumber("clamp_min", "Fan Clamp Min",
                            "boiler/cmd/clamp_min", TOPIC_SETTINGS,
@@ -563,11 +563,11 @@ static void publishDiscovery() {
 
     publishDiscoveryNumber("flue_low", "Flue Low Threshold",
                            "boiler/cmd/flue_low", TOPIC_SETTINGS,
-                           "°F", 50, 900, 5, nullptr, "mdi:thermometer-alert");
+                           "Â°F", 50, 900, 5, nullptr, "mdi:thermometer-alert");
 
     publishDiscoveryNumber("flue_rec", "Flue Recovery Threshold",
                            "boiler/cmd/flue_rec", TOPIC_SETTINGS,
-                           "°F", 50, 900, 5, nullptr, "mdi:thermometer-chevron-up");
+                           "Â°F", 50, 900, 5, nullptr, "mdi:thermometer-chevron-up");
 
     publishDiscoveryNumber("lockout", "Season Lockout Hours",
                            "boiler/cmd/lockout", TOPIC_SETTINGS,
@@ -583,28 +583,28 @@ static void publishDiscovery() {
 
     publishDiscoveryNumber("summer_setpoint", "Summer Setpoint",
                            "boiler/cmd/summer_setpoint", TOPIC_SETTINGS,
-                           "°F", 200, 900, 1);
+                           "Â°F", 200, 900, 1);
 
     publishDiscoveryNumber("spf_setpoint", "Spring/Fall Setpoint",
                            "boiler/cmd/spf_setpoint", TOPIC_SETTINGS,
-                           "°F", 200, 900, 1);
+                           "Â°F", 200, 900, 1);
 
     publishDiscoveryNumber("winter_setpoint", "Winter Setpoint",
                            "boiler/cmd/winter_setpoint", TOPIC_SETTINGS,
-                           "°F", 200, 900, 1);
+                           "Â°F", 200, 900, 1);
 
     publishDiscoveryNumber("extreme_setpoint", "Extreme Setpoint",
                            "boiler/cmd/extreme_setpoint", TOPIC_SETTINGS,
-                           "°F", 200, 900, 1);
+                           "Â°F", 200, 900, 1);
 
     // v3.3 Boiler Control discovery
     publishDiscoveryNumber("tank_low", "Tank Low Setpoint",
                            "boiler/cmd/tank_low", TOPIC_SETTINGS,
-                           "°F", 80, 190, 1, nullptr, "mdi:water-boiler");
+                           "Â°F", 80, 190, 1, nullptr, "mdi:water-boiler");
 
     publishDiscoveryNumber("tank_high", "Tank High Setpoint",
                            "boiler/cmd/tank_high", TOPIC_SETTINGS,
-                           "°F", 80, 190, 1, nullptr, "mdi:water-boiler");
+                           "Â°F", 80, 190, 1, nullptr, "mdi:water-boiler");
 
 }
 

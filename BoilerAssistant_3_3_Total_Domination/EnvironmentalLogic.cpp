@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Environmental Logic Module (v3.3.2 "Total Domination")
+ *  Boiler Assistant â€“ Environmental Logic Module (v3.3.4 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.cpp
  *  Author: The Architect Collective
@@ -12,14 +12,14 @@
  *    This module determines the active season based on outdoor
  *    temperature and applies deterministic seasonal overrides for:
  *
- *      • Exhaust setpoint
- *      • Tank High / Tank Low setpoints
- *      • ClampMax fan limit
+ *      â€¢ Exhaust setpoint
+ *      â€¢ Tank High / Tank Low setpoints
+ *      â€¢ ClampMax fan limit
  *
  *    Seasonal behavior follows the Total Domination Architecture (TDA):
  *      - SystemData is the single source of truth
  *      - No UI or control logic lives here
- *      - All overrides are deterministic and operator‑visible
+ *      - All overrides are deterministic and operatorâ€‘visible
  *
  *  Architectural Notes:
  *      - determineSeason() selects the correct season based on
@@ -30,7 +30,7 @@
  *        main loop to maintain seasonal correctness.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 

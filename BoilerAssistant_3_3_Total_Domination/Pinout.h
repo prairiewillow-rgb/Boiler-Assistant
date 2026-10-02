@@ -1,6 +1,6 @@
-/*
+﻿/*
  * ============================================================
- *  Boiler Assistant – Hardware Pinout 
+ *  Boiler Assistant â€“ Hardware Pinout 
  *  ------------------------------------------------------------
  *  File: Pinout.h
  *  Author: The Architect Collective
@@ -10,9 +10,9 @@
  *  Description:
  *      Centralized hardware pin definitions for the UNO R4 WiFi
  *      platform used by Boiler Assistant. Ensures:
- *        • Single source of truth for all hardware mappings
- *        • Clean separation between logic and hardware layout
- *        • Safe, explicit pin usage for I2C, SPI, PWM, relays,
+ *        â€¢ Single source of truth for all hardware mappings
+ *        â€¢ Clean separation between logic and hardware layout
+ *        â€¢ Safe, explicit pin usage for I2C, SPI, PWM, relays,
  *          and DS18B20 OneWire sensors.
  *
  *      Power Notes:
@@ -20,9 +20,9 @@
  *          DS18B20 sensors) must use the UNO R4's regulated 5V
  *          and GND rails. Do NOT mix external supplies.
  *
- *      ⚠ WARNING — BME280 SENSOR VOLTAGE:
+ *      âš  WARNING â€” BME280 SENSOR VOLTAGE:
  *        - The BME280 module used for outdoor sensing is a
- *          **3.3V‑ONLY device**.
+ *          **3.3Vâ€‘ONLY device**.
  *        - NEVER connect it to 5V power or 5V I2C lines unless
  *          the breakout board includes a regulator + level shifter.
  *        - Direct 5V wiring will permanently damage the sensor.
@@ -35,7 +35,7 @@
  *          when a valid Z-C signal is present on D0, legacy PWM otherwise.
  *
  *  Version:
- *      Boiler Assistant v3.3.2 "Total Domination"
+ *      Boiler Assistant v3.3.4 "Total Domination"
  * ============================================================
  */
 
@@ -69,18 +69,18 @@
 #define PIN_DS18B20_DATA   D8
 
 /* ============================================================
- *  SPI – MAX31855 Thermocouples
+ *  SPI â€“ MAX31855 Thermocouples
  *  UNO R4 SPI pins:
  *      SCK  = D13
  *      MISO = D12
  *      MOSI = D11 (unused by MAX31855)
  * ============================================================ */
 
-#define PIN_MAX31855_MISO  D12  // DO  (Data Out → MCU MISO)
+#define PIN_MAX31855_MISO  D12  // DO  (Data Out â†’ MCU MISO)
 #define PIN_MAX31855_SCK   D13  // CLK (Clock from MCU)
 
 // Chip selects (one per thermocouple)
-#define PIN_TC1_CS         D7   // CS (Chip Select) – Exhaust probe
+#define PIN_TC1_CS         D7   // CS (Chip Select) â€“ Exhaust probe
 #define PIN_TC2_CS         D3
 #define PIN_TC3_CS         D4
 #define PIN_TC4_CS         D2   // Keep separate from fan PWM on D5
