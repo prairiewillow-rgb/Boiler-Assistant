@@ -1,15 +1,15 @@
 /*
  * ============================================================
- *  Boiler Assistant – Main Firmware (v3.3 "Total Domination")
+ *  Boiler Assistant – Main Firmware (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_Total Domination.ino
+ *  File: BoilerAssistant_3_3_Total_Domination.ino
  *  Author: The Architect Collective
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
- *                                                                                                                                                             Description:
+ *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.1 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.2 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Deterministic, non-blocking main loop
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -17,13 +17,15 @@
  *
  *    Subsystems coordinated by this module:
  *      - Environmental sensing (BME280)
- *      - Temperature sensing (DS18B20)
+ *      - Temperature sensing (DS18B20 + MAX31855 exhaust)
  *      - Burn engine logic (demand, ramp, hold, safety)
- *      - Fan control (PWM, clamp logic, deadzone modes)
+ *      - Fan control (clamps, ramping, startup kick, damper pre-delay)
+ *      - Fan dimmer output (zero-cross PSM phase control, PWM fallback)
  *      - UI rendering (LCD) + keypad-driven operator interface
  *      - EEPROM-backed configuration and seasonal profiles
  *      - WiFi provisioning (STA-first, AP-fallback)
  *      - WiFi API + MQTT telemetry (async, non-blocking)
+ *      - Push notifications (ntfy)
  *
  *  v3.3 Additions:
  *      - Adaptive fan curve with persistent learning
@@ -35,6 +37,19 @@
  *      - Live diagnostics through the web dashboard and MQTT
  *      - Authenticated remote alarm reset; run mode remains local-only
  *
+ *  v3.3.1 Additions:
+ *      - Damper opens before fan start (pre-fan delay)
+ *      - 2-second startup kick before returning to requested speed
+ *      - Zero-cross phase control with automatic PWM fallback
+ *
+ *  v3.3.2 Additions:
+ *      - Damper pre-fan delay reduced from 10 s to 5 s
+ *      - Push notifications via ntfy (high temp, tank fault,
+ *        exhaust fault, Ember Guardian, plus a dashboard test)
+ *      - Automatic self-cleaning burn: burn-count interval,
+ *        overnight window in local time, one-hour cap,
+ *        AUTO TANK mode only, manual request from the dashboard
+ *
  *  Architectural Notes:
  *      - Main loop is strictly deterministic and non-blocking
  *      - All subsystems operate on timed or event-driven cadence
@@ -43,7 +58,7 @@
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -68,9 +83,10 @@
 #include "WiFiAPI.h"
 #include "MQTTClient.h"
 #include "WiFiProvisioning.h"
+#include "PushNotify.h"
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 → v3.x)
+ *  COMPATIBILITY SHIMS (v2.2 → v3.3.2)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8
@@ -134,7 +150,7 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.2 Boot ===");
 
     Wire.begin();
     Wire.setClock(400000);
@@ -232,6 +248,7 @@ void loop() {
     if (!wifi_prov_isAPMode()) {
         wifiapi_loop();
         mqtt_loop();
+        pushnotify_loop();
     }
 
     // 6) UI

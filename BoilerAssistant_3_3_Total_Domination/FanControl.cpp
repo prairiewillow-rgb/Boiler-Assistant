@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Fan Control Module (v3.3 "Total Domination")
+ *  Boiler Assistant – Fan Control Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -15,9 +15,14 @@
  *
  *    Responsibilities:
  *      • Clamp Mode (fan always on within min/max limits)
- *      • Fan‑off Mode with hysteresis and re‑enable thresholds
+ *      • Fan-off Mode with hysteresis and re-enable thresholds
  *      • BOOST and SAFETY overrides
- *      • State‑transition smoothing between RAMP/HOLD
+ *      • State-transition smoothing between RAMP/HOLD
+ *      • Damper pre-fan delay (5 s) and 2-second startup kick
+ *      • After the kick, ramps down from 100% toward the target
+ *        (avoids the low-speed stall point)
+ *      • Gradual ramping toward the requested fan speed
+ *      • Exhaust-probe fallback at max clamp fan output
  *      • Full SystemData migration (no legacy globals)
  *
  *  Architectural Notes:
@@ -27,7 +32,7 @@
  *      - Output is always deterministic and operator‑visible.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -49,7 +54,7 @@ static unsigned long fanKickUntil = 0;
 static unsigned long lastRampMs = 0;
 static unsigned long fanStartDelayUntil = 0;
 static const unsigned long FAN_START_KICK_MS = 2000UL;
-static const unsigned long FAN_DAMPER_DELAY_MS = 10000UL;
+static const unsigned long FAN_DAMPER_DELAY_MS = 5000UL;
 static const unsigned long FAN_RAMP_INTERVAL_MS = 100UL;
 static const int FAN_RAMP_STEP_PERCENT = 3;
 static const unsigned long FAN_HOLD_RAMP_UP_INTERVAL_MS = 500UL;
@@ -87,8 +92,9 @@ static int fancontrol_rampTo(int target) {
         if ((long)(now - fanKickUntil) < 0) return 100;
         fanKickUntil = 0;
         lastRampMs = now;
-        // Kick only spins the motor up; climb from min clamp instead of falling from 100.
-        lastOutput = target < sys.clampMinPercent ? target : sys.clampMinPercent;
+        // After the kick, ramp DOWN from 100% toward the target (3.2 behavior)
+        // so the motor never drops straight to a low speed where it could stall.
+        lastOutput = 100;
         return lastOutput;
     }
 

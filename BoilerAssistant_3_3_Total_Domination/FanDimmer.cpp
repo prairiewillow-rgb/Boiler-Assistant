@@ -1,3 +1,35 @@
+/*
+ * ============================================================
+ *  Boiler Assistant – Fan Dimmer Module (v3.3.2 "Total Domination")
+ *  ------------------------------------------------------------
+ *  File: FanDimmer.cpp
+ *  Author: The Architect Collective
+ *  Maintainer: Karl (Embedded Systems Architect)
+ *  License: CC BY-NC-SA 4.0
+ *
+ *  Description:
+ *    Fan output driver for the PWM/dimmer hardware. When a valid
+ *    zero-cross signal is present on D0, the fan output on D5 uses
+ *    zero-cross-synchronized PSM phase control. Without a valid
+ *    zero-cross signal, output automatically falls back to legacy
+ *    PWM so existing installations keep working unchanged.
+ *
+ *    Responsibilities:
+ *      • Zero-cross detection with half-cycle validation
+ *      • Phase-fired PSM pulses timed from each zero-cross
+ *      • Automatic fallback to analogWrite PWM when Z-C is absent
+ *      • Non-blocking, timer/interrupt-driven output
+ *
+ *  Architectural Notes:
+ *      - This module owns the physical fan output pin only.
+ *      - Fan demand decisions live in FanControl; state logic in
+ *        BurnEngine; both call fan_dimmer_setPercent().
+ *
+ *  Version:
+ *      Boiler Assistant v3.3.2 "Total Domination"
+ * ============================================================
+ */
+
 #include "FanDimmer.h"
 #include "Pinout.h"
 #include <FspTimer.h>
@@ -118,7 +150,9 @@ bool fan_dimmer_init() {
     }
 
     phaseTimerReady = true;
-    pinMode(PIN_FAN_ZERO_CROSS, INPUT);
+    // INPUT_PULLUP: if the Z-C wire is loose or the module output is
+    // open-collector, a floating pin would chatter and storm the ISR.
+    pinMode(PIN_FAN_ZERO_CROSS, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(PIN_FAN_ZERO_CROSS),
                     fan_zeroCrossIsr,
                     RISING);

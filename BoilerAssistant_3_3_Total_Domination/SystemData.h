@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System Data API (v3.3 "Total Domination")
+ *  Boiler Assistant – System Data API (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.h
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - All modules must treat SystemData as authoritative.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -209,6 +209,7 @@ struct SystemData
      * ------------------------------ */
     uint32_t burnHistoryDurationSec[BURN_HISTORY_COUNT];
     uint32_t burnHistoryIntervalSec[BURN_HISTORY_COUNT];
+    uint32_t burnHistoryStartElapsedMin[BURN_HISTORY_COUNT];
     int16_t  burnHistoryWaterTempF[BURN_HISTORY_COUNT];
     uint8_t  burnHistoryCount;
     unsigned long burnActiveStartMs;
@@ -234,6 +235,26 @@ struct SystemData
      *  UI
      * ------------------------------ */
     bool uiNeedsRefresh;
+
+    /* ------------------------------
+     *  SELF-CLEANING BURN
+     * ------------------------------ */
+    bool selfCleanEnabled;
+    bool selfCleanDue;
+    bool selfCleanActive;
+    bool selfCleanManualRequested;
+    uint16_t selfCleanBurnCount;
+    uint16_t selfCleanIntervalBurns;
+    uint8_t selfCleanStartHour;
+    uint8_t selfCleanEndHour;
+    int16_t selfCleanUtcOffsetMinutes;
+    bool selfCleanDstEnabled;
+
+    /* ------------------------------
+     *  PUSH NOTIFICATIONS (ntfy)
+     * ------------------------------ */
+    bool pushEnabled;
+    char pushTopic[33];
 };
 
 /* ============================================================

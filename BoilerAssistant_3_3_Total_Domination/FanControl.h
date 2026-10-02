@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Fan Control API (v3.3 "Total Domination")
+ *  Boiler Assistant – Fan Control API (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.h
  *  Author: The Architect Collective
@@ -17,11 +17,12 @@
  *    Responsibilities:
  *      • Adaptive fan control for RAMP and HOLD states
  *      • BOOST override (100% output)
- *      • IDLE fan‑off behavior
+ *      • IDLE fan-off behavior
  *      • Deadzone fan modes:
  *            0 = fan allowed to turn OFF
  *            1 = fan always ON
- *      • Guardian hard‑kill (PWM = 0)
+ *      • Damper pre-fan delay (5 s) and 2-second startup kick
+ *      • Guardian hard-kill (output = 0)
  *      • Deterministic smoothing of fan transitions
  *
  *  Architectural Notes:
@@ -31,7 +32,7 @@
  *      - No UI, EEPROM, or WiFi logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 

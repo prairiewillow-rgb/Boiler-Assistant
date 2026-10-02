@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Burn Engine Module (v3.3 "Total Domination")
+ *  Boiler Assistant – Burn Engine Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -26,14 +26,21 @@
  *      - Deterministic fan clamping and demand shaping
  *      - Expanded documentation for open‑source contributors
  *
+ *  v3.3.2 Additions:
+ *      - Automatic self-cleaning burn: after a configurable number of
+ *        completed burns, one full-output burn runs inside the
+ *        configured overnight window (local time zone + DST), capped
+ *        at one hour, AUTO TANK mode only; manual request supported
+ *
  *  Architectural Notes:
  *      - This module never touches UI or WiFi logic
  *      - SystemData is the single source of truth for all parameters
- *      - Dampers and fan outputs are applied only through this module
+ *      - Dampers are applied through this module; fan output is
+ *        commanded through FanControl/FanDimmer
  *      - All timing uses millis() and remains strictly non‑blocking
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -45,6 +52,7 @@
 #include "Sensors.h"
 #include "Pinout.h"
 #include "EEPROMStorage.h"
+#include <WiFiS3.h>
 #include "OTAUpdater.h"
 
 extern SystemData sys;
@@ -79,6 +87,30 @@ static double adaptiveLastTemperature = NAN;
 static unsigned long adaptiveLastSampleMs = 0;
 static unsigned long adaptiveLastSavedMs = 0;
 static const unsigned long ADAPTIVE_SAVE_INTERVAL_MS = 3600000UL;
+static const unsigned long SELF_CLEAN_MAX_MS = 3600000UL;
+static unsigned long selfCleanStartMs = 0;
+
+static bool selfCleanNightAllowed() {
+    unsigned long utc = WiFi.getTime();
+    if (utc == 0) return false;
+
+    long localSeconds = (long)utc +
+                        (long)sys.selfCleanUtcOffsetMinutes * 60L +
+                        (sys.selfCleanDstEnabled ? 3600L : 0L);
+    if (localSeconds < 0) localSeconds += 86400L;
+    int hour = (int)((localSeconds / 3600L) % 24L);
+
+    if (sys.selfCleanStartHour == sys.selfCleanEndHour) return true;
+    if (sys.selfCleanStartHour < sys.selfCleanEndHour) {
+        return hour >= sys.selfCleanStartHour && hour < sys.selfCleanEndHour;
+    }
+    return hour >= sys.selfCleanStartHour || hour < sys.selfCleanEndHour;
+}
+
+static bool selfCleanMayStart() {
+    return sys.selfCleanManualRequested ||
+           (sys.selfCleanDue && selfCleanNightAllowed());
+}
 
 float burnengine_getAdaptiveSlope() {
     return adaptiveSlope;
@@ -149,10 +181,12 @@ static void updateBurnHistory(unsigned long now) {
         for (int i = limit; i > 0; i--) {
             sys.burnHistoryDurationSec[i] = sys.burnHistoryDurationSec[i - 1];
             sys.burnHistoryIntervalSec[i] = sys.burnHistoryIntervalSec[i - 1];
+            sys.burnHistoryStartElapsedMin[i] = sys.burnHistoryStartElapsedMin[i - 1];
             sys.burnHistoryWaterTempF[i] = sys.burnHistoryWaterTempF[i - 1];
         }
         sys.burnHistoryDurationSec[0] = duration;
         sys.burnHistoryIntervalSec[0] = interval;
+        sys.burnHistoryStartElapsedMin[0] = sys.burnActiveStartMs / 60000UL;
         sys.burnHistoryWaterTempF[0] = -1;
         if (sys.waterProbeCount > 0) {
             uint8_t tankProbe = sys.probeRoleMap[PROBE_TANK];
@@ -164,6 +198,20 @@ static void updateBurnHistory(unsigned long now) {
         if (sys.burnHistoryCount < BURN_HISTORY_COUNT) sys.burnHistoryCount++;
         sys.burnLastStartMs = sys.burnActiveStartMs;
         sys.burnActiveStartMs = 0;
+
+        if (sys.selfCleanActive) {
+            sys.selfCleanActive = false;
+            sys.selfCleanDue = false;
+            sys.selfCleanManualRequested = false;
+            sys.selfCleanBurnCount = 0;
+            selfCleanStartMs = 0;
+        } else if (sys.selfCleanEnabled &&
+                   sys.selfCleanBurnCount < sys.selfCleanIntervalBurns) {
+            sys.selfCleanBurnCount++;
+            if (sys.selfCleanBurnCount >= sys.selfCleanIntervalBurns) {
+                sys.selfCleanDue = true;
+            }
+        }
     }
 
     historyLastState = sys.burnState;
@@ -252,6 +300,29 @@ int burnengine_compute() {
     unsigned long now = millis();
 
     updateBurnHistory(now);
+
+    if (!sys.selfCleanEnabled) {
+        sys.selfCleanDue = false;
+        sys.selfCleanActive = false;
+        sys.selfCleanManualRequested = false;
+        sys.selfCleanBurnCount = 0;
+        selfCleanStartMs = 0;
+    }
+
+    if (sys.selfCleanActive && selfCleanStartMs != 0 &&
+        now - selfCleanStartMs >= SELF_CLEAN_MAX_MS) {
+        sys.selfCleanActive = false;
+        sys.selfCleanDue = false;
+        sys.selfCleanManualRequested = false;
+        sys.selfCleanBurnCount = 0;
+        selfCleanStartMs = 0;
+        sys.burnState = BURN_IDLE;
+        sys.boostActive = false;
+        sys.rampTimerActive = false;
+        sys.holdTimerActive = false;
+        digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
+        return 0;
+    }
 
     if (ota_isActive()) {
         digitalWrite(PIN_DAMPER, HIGH);   // CLOSED
@@ -443,6 +514,14 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
     return 0;
 }
 
+/* Ember Guardian debounce: the raw flue reading can bounce several
+ * degrees near the thresholds. Require sustained conditions before the
+ * countdown starts or cancels so it cannot restart/clear randomly. */
+static const unsigned long GUARDIAN_START_CONFIRM_MS   = 15000UL;
+static const unsigned long GUARDIAN_RECOVER_CONFIRM_MS = 30000UL;
+static unsigned long guardianLowSinceMs       = 0;
+static unsigned long guardianRecoveredSinceMs = 0;
+
 /* ============================================================
  *  SHARED GUARDIAN + DAMPER + FAN APPLY
  * ============================================================ */
@@ -455,16 +534,33 @@ static int burnengine_finalize(int demand,
     if (!sys.exhaustSensorOK || sys.exhaustFallbackActive) {
         sys.emberGuardianTimerActive = false;
         sys.emberGuardianStartMs     = 0;
+        guardianLowSinceMs           = 0;
+        guardianRecoveredSinceMs     = 0;
     }
     else if (sys.burnState == BURN_RAMP || sys.burnState == BURN_HOLD) {
 
-        if (!sys.emberGuardianTimerActive &&
-            !isnan(exhaustGuardF) &&
-            exhaustGuardF < sys.flueLowThreshold)
-        {
-            sys.emberGuardianActive      = false;
-            sys.emberGuardianStartMs     = now;
-            sys.emberGuardianTimerActive = true;
+        bool flueBelowLow = (!isnan(exhaustGuardF) &&
+                             exhaustGuardF < sys.flueLowThreshold);
+        bool flueAboveRec = (!isnan(exhaustGuardF) &&
+                             exhaustGuardF >= sys.flueRecoveryThreshold);
+
+        /* START: the flue must hold below the low threshold for a
+         * sustained window first. One noisy raw sample can no longer
+         * start (or restart) the countdown.
+         */
+        if (!sys.emberGuardianTimerActive) {
+            if (flueBelowLow) {
+                if (guardianLowSinceMs == 0) guardianLowSinceMs = now;
+                if (now - guardianLowSinceMs >= GUARDIAN_START_CONFIRM_MS) {
+                    sys.emberGuardianActive      = false;
+                    sys.emberGuardianStartMs     = now;
+                    sys.emberGuardianTimerActive = true;
+                    guardianLowSinceMs           = 0;
+                    guardianRecoveredSinceMs     = 0;
+                }
+            } else {
+                guardianLowSinceMs = 0;
+            }
         }
 
         if (sys.emberGuardianTimerActive) {
@@ -472,14 +568,27 @@ static int burnengine_finalize(int demand,
             unsigned long elapsed = now - sys.emberGuardianStartMs;
             unsigned long limitMs = (unsigned long)sys.emberGuardianTimerMinutes * 60000UL;
 
-            bool timerExpired  = (elapsed >= limitMs);
-            bool flueRecovered = (!isnan(exhaustGuardF) &&
-                                  exhaustGuardF >= sys.flueRecoveryThreshold);
+            bool timerExpired = (elapsed >= limitMs);
 
-            if (flueRecovered) {
+            /* CANCEL: the flue must hold above the recovery threshold for
+             * a sustained window. A single bouncing raw reading no longer
+             * wipes the countdown (which made it look random).
+             */
+            if (flueAboveRec) {
+                if (guardianRecoveredSinceMs == 0) guardianRecoveredSinceMs = now;
+            } else {
+                guardianRecoveredSinceMs = 0;
+            }
+
+            bool recoveryConfirmed =
+                (guardianRecoveredSinceMs != 0) &&
+                (now - guardianRecoveredSinceMs >= GUARDIAN_RECOVER_CONFIRM_MS);
+
+            if (recoveryConfirmed) {
                 sys.emberGuardianTimerActive = false;
                 sys.emberGuardianActive      = false;
                 sys.emberGuardianStartMs     = 0;
+                guardianRecoveredSinceMs     = 0;
             }
             else if (timerExpired) {
                 sys.burnState                = BURN_EMBER_GUARD;
@@ -490,10 +599,22 @@ static int burnengine_finalize(int demand,
                 sys.emberGuardianActive      = true;
                 sys.emberGuardianLatched     = true;
                 sys.emberGuardianTimerActive = false;
+                guardianLowSinceMs           = 0;
+                guardianRecoveredSinceMs     = 0;
 
                 demand = 0;
             }
         }
+    }
+    else if (sys.burnState != BURN_EMBER_GUARD) {
+        /* Left RAMP/HOLD without latching (auto-stop, mode change):
+         * clear the timer so a stale countdown can't resume (or
+         * instantly latch) on the next burn cycle.
+         */
+        sys.emberGuardianTimerActive = false;
+        sys.emberGuardianStartMs     = 0;
+        guardianLowSinceMs           = 0;
+        guardianRecoveredSinceMs     = 0;
     }
 
     /* GUARDIAN RETURN PATH (LATCHED SHUTDOWN) */
@@ -544,6 +665,10 @@ static int burnengine_computeAutoTank() {
     if (sys.burnState == BURN_IDLE) {
         if (!isnan(tankF) && tankF < sys.tankLowSetpointF) {
             burnengine_startBoost();
+            if (sys.selfCleanEnabled && selfCleanMayStart()) {
+                sys.selfCleanActive = true;
+                selfCleanStartMs = now;
+            }
         }
     }
 
@@ -600,11 +725,13 @@ static int burnengine_computeAutoTank() {
 
     switch (sys.burnState) {
         case BURN_BOOST:
-            demand = 100;
+            demand = sys.selfCleanActive ? 100 : 100;
             break;
 
         case BURN_RAMP:
-            if (isnan(exhaustControlF)) {
+            if (sys.selfCleanActive) {
+                demand = 100;
+            } else if (isnan(exhaustControlF)) {
                 demand = 0;
             } else {
                 double low  = sys.exhaustSetpoint - 200.0;
@@ -624,7 +751,9 @@ static int burnengine_computeAutoTank() {
             break;
 
         case BURN_HOLD:
-            demand = burnengine_computeHoldDemand(exhaustControlF, now);
+            demand = sys.selfCleanActive
+                         ? 100
+                         : burnengine_computeHoldDemand(exhaustControlF, now);
             break;
 
         case BURN_IDLE:

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage Module (v3.3 "Total Domination")
+ *  Boiler Assistant – EEPROM Storage Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -48,6 +48,11 @@ static const int EEPROM_CRC_ADDR = 90;
 // Outside the CRC range so adding it doesn't invalidate existing configs.
 static const int EEPROM_ENV_UNITS_ADDR = 92;
 static const int EEPROM_PROBE_NAMES_ADDR = 400;
+static const int EEPROM_SELF_CLEAN_ADDR = 93;
+// Push config lives outside the CRC region (460+) so it never invalidates
+// an existing saved configuration.
+static const int EEPROM_PUSH_ENABLED_ADDR = 460;
+static const int EEPROM_PUSH_TOPIC_ADDR   = 461;  // 33 bytes (32 chars + NUL)
 static const uint8_t EEPROM_MAGIC = 0xBA;
 static const uint8_t EEPROM_VERSION = 3;
 
@@ -119,6 +124,12 @@ static void eeprom_saveDefaultConfig() {
     eeprom_saveProbeRoles();
     eeprom_saveEnvSeasonTankValues();
     eeprom_saveEnvSeasonClampValues();
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR, sys.selfCleanEnabled ? 1 : 0);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 1, sys.selfCleanIntervalBurns);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 2, sys.selfCleanStartHour);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 3, sys.selfCleanEndHour);
+    eeprom_write16(EEPROM_SELF_CLEAN_ADDR + 4, sys.selfCleanUtcOffsetMinutes);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 6, sys.selfCleanDstEnabled ? 1 : 0);
     eeprom_markConfigValid();
 }
 
@@ -177,6 +188,22 @@ void eeprom_init() {
     sys.tankLowSetpointF     = eeprom_read16(46);
     sys.tankHighSetpointF    = eeprom_read16(48);
     sys.controlMode          = (RunMode)EEPROM.read(50);
+
+    sys.selfCleanEnabled = EEPROM.read(EEPROM_SELF_CLEAN_ADDR) == 1;
+    sys.selfCleanIntervalBurns = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 1);
+    sys.selfCleanStartHour = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 2);
+    sys.selfCleanEndHour = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 3);
+    uint8_t legacyOffset = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 4);
+    uint8_t legacyDst = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 5);
+    int16_t storedUtcOffset = eeprom_read16(EEPROM_SELF_CLEAN_ADDR + 4);
+    if ((legacyDst == 0 || legacyDst == 1) &&
+        (int8_t)legacyOffset >= -12 && (int8_t)legacyOffset <= 14) {
+        sys.selfCleanUtcOffsetMinutes = (int16_t)(int8_t)legacyOffset * 60;
+        sys.selfCleanDstEnabled = legacyDst == 1;
+    } else {
+        sys.selfCleanUtcOffsetMinutes = storedUtcOffset;
+        sys.selfCleanDstEnabled = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 6) == 1;
+    }
 
     // === PROBE ROLES ===
     // Default: Tank probe = physical probe 0
@@ -247,6 +274,15 @@ void eeprom_init() {
     if (sys.envSeasonMode > 2) sys.envSeasonMode = 0;
     if (sys.envModeLockoutSec > 99UL * 3600UL) sys.envModeLockoutSec = 0;
 
+    if (sys.selfCleanIntervalBurns == 0 || sys.selfCleanIntervalBurns == 255) {
+        sys.selfCleanIntervalBurns = 30;
+    }
+    if (sys.selfCleanStartHour > 23) sys.selfCleanStartHour = 23;
+    if (sys.selfCleanEndHour > 23) sys.selfCleanEndHour = 6;
+    if (sys.selfCleanUtcOffsetMinutes < -720 || sys.selfCleanUtcOffsetMinutes > 840) {
+        sys.selfCleanUtcOffsetMinutes = -360;
+    }
+
     if (sys.envClampMaxSummerPercent > 100) sys.envClampMaxSummerPercent = 40;
     if (sys.envClampMaxSpringFallPercent > 100) sys.envClampMaxSpringFallPercent = 50;
     if (sys.envClampMaxWinterPercent > 100) sys.envClampMaxWinterPercent = 60;
@@ -275,6 +311,30 @@ void eeprom_init() {
     }
 
     sys.envUnitsMetric = EEPROM.read(EEPROM_ENV_UNITS_ADDR) == 1 ? 1 : 0;
+
+    // === PUSH NOTIFICATIONS ===
+    sys.pushEnabled = EEPROM.read(EEPROM_PUSH_ENABLED_ADDR) == 1;
+    bool topicValid = false;
+    for (uint8_t i = 0; i < 33; i++) {
+        char c = (char)EEPROM.read(EEPROM_PUSH_TOPIC_ADDR + i);
+        sys.pushTopic[i] = c;
+        if (c == '\0') { topicValid = true; break; }
+        bool okChar = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!okChar) { topicValid = false; break; }
+    }
+    if (!topicValid || sys.pushTopic[0] == '\0') {
+        sys.pushTopic[0] = '\0';
+        sys.pushEnabled = false;
+    }
+}
+
+void eeprom_savePushNotify() {
+    EEPROM.update(EEPROM_PUSH_ENABLED_ADDR, sys.pushEnabled ? 1 : 0);
+    for (uint8_t i = 0; i < 33; i++) {
+        EEPROM.update(EEPROM_PUSH_TOPIC_ADDR + i, (uint8_t)sys.pushTopic[i]);
+        if (sys.pushTopic[i] == '\0') break;
+    }
 }
 
 /* ============================================================
@@ -432,6 +492,15 @@ void eeprom_saveEnvSeasonClampValues() {
     EEPROM.write(86, sys.envClampMaxWinterPercent);
     EEPROM.write(87, sys.envClampMaxExtremePercent);
     eeprom_markConfigValid();
+}
+
+void eeprom_saveSelfClean() {
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR, sys.selfCleanEnabled ? 1 : 0);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 1, sys.selfCleanIntervalBurns);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 2, sys.selfCleanStartHour);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 3, sys.selfCleanEndHour);
+    eeprom_write16(EEPROM_SELF_CLEAN_ADDR + 4, sys.selfCleanUtcOffsetMinutes);
+    EEPROM.update(EEPROM_SELF_CLEAN_ADDR + 6, sys.selfCleanDstEnabled ? 1 : 0);
 }
 
 /* ============================================================

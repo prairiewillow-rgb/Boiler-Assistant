@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – OTA Updater (v3.3 "Total Domination")
+ *  Boiler Assistant – OTA Updater (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: OTAUpdater.cpp
  *  Maintainer: Karl (Embedded Systems Architect)

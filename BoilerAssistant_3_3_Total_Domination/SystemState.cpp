@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System State Module (v3.3 "Total Domination")
+ *  Boiler Assistant – System State Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemState.cpp
  *  Author: The Architect Collective
@@ -24,7 +24,7 @@
  *      - Safety always starts cleared (SAFETY_OK)
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 

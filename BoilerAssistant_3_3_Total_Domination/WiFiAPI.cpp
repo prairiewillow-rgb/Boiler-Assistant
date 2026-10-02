@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – WiFi JSON API Module (v3.3 "Total Domination")
+ *  Boiler Assistant – WiFi JSON API Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.cpp
  *  Author: The Architect Collective
@@ -28,7 +28,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -40,6 +40,7 @@
 #include "ConfigValidation.h"
 #include "DashboardHTML.h"
 #include "BurnEngine.h"
+#include "PushNotify.h"
 
 #include <WiFiS3.h>
 #include <WiFiServer.h>
@@ -167,12 +168,19 @@ static String buildStateJson() {
     stateDoc["safety_state"] = sys.safetyState;
     stateDoc["safety_text"] = safetyText;
     stateDoc["exhaust_fallback"] = sys.exhaustFallbackActive;
-    stateDoc["alert"] = sys.exhaustFallbackActive
-                              ? "EXHAUST PROBE NEEDS CLEANING OR REPLACEMENT - FAN AT MAX CLAMP"
-                              : ((sys.emberGuardianLatched ||
-                                  sys.burnState == BURN_EMBER_GUARD)
-                                     ? "EMBER GUARDIAN - RESET REQUIRED"
-                                     : (sys.safetyState == SAFETY_OK ? "" : safetyText));
+    const char* alertText = "";
+    if (sys.exhaustFallbackActive) {
+        alertText = "EXHAUST PROBE NEEDS CLEANING - FAN AT MAX";
+    } else if (sys.emberGuardianLatched || sys.burnState == BURN_EMBER_GUARD) {
+        alertText = "EMBER GUARDIAN ACTIVE - RESET REQUIRED";
+    } else if (sys.safetyState == SAFETY_HIGHTEMP) {
+        alertText = "HIGH TEMPERATURE LOCKOUT";
+    } else if (sys.safetyState == SAFETY_SENSOR_FAULT) {
+        alertText = (sys.sensorFaultMask & SENSOR_FAULT_TANK)
+                        ? "TANK PROBE FAULT - SYSTEM STOPPED"
+                        : "SENSOR FAULT - SYSTEM STOPPED";
+    }
+    stateDoc["alert"] = alertText;
     stateDoc["tank_temp"] = tankTemp;
     stateDoc["tank_sensor_ok"] = tankSensorOK;
     stateDoc["exhaust_sensor_ok"] = sys.exhaustSensorOK;
@@ -180,6 +188,14 @@ static String buildStateJson() {
     stateDoc["display_name"] = runtimeCreds.displayName;
     stateDoc["tank_low"] = sys.tankLowSetpointF;
     stateDoc["tank_high"] = sys.tankHighSetpointF;
+    stateDoc["self_clean_enabled"] = sys.selfCleanEnabled;
+    stateDoc["self_clean_due"] = sys.selfCleanDue;
+    stateDoc["self_clean_active"] = sys.selfCleanActive;
+    stateDoc["self_clean_manual"] = sys.selfCleanManualRequested;
+    stateDoc["self_clean_burn_count"] = sys.selfCleanBurnCount;
+    stateDoc["self_clean_interval"] = sys.selfCleanIntervalBurns;
+    stateDoc["push_enabled"]  = sys.pushEnabled;
+    stateDoc["push_configured"] = sys.pushEnabled && sys.pushTopic[0] != '\0';
 
     stateDoc["rssi"]           = WiFi.RSSI();
 
@@ -207,13 +223,17 @@ static String buildStateJson() {
 static String buildHistoryJson() {
     String out;
     out.reserve(12000);
-    out += "{\"burn_history\":[";
+    out += "{\"history_now_min\":";
+    out += millis() / 60000UL;
+    out += ",\"burn_history\":[";
     for (uint8_t i = 0; i < sys.burnHistoryCount; i++) {
         if (i > 0) out += ',';
         out += "{\"duration_sec\":";
         out += sys.burnHistoryDurationSec[i];
         out += ",\"interval_sec\":";
         out += sys.burnHistoryIntervalSec[i];
+        out += ",\"start_elapsed_min\":";
+        out += sys.burnHistoryStartElapsedMin[i];
         out += ",\"water_temp_f\":";
         out += sys.burnHistoryWaterTempF[i];
         out += '}';
@@ -255,6 +275,14 @@ static String buildSettingsJson() {
     settingsDoc["tank_low"]          = sys.tankLowSetpointF;
     settingsDoc["tank_high"]         = sys.tankHighSetpointF;
     settingsDoc["env_units"]         = sys.envUnitsMetric;
+    settingsDoc["self_clean_enabled"] = sys.selfCleanEnabled;
+    settingsDoc["self_clean_interval"] = sys.selfCleanIntervalBurns;
+    settingsDoc["self_clean_start_hour"] = sys.selfCleanStartHour;
+    settingsDoc["self_clean_end_hour"] = sys.selfCleanEndHour;
+    settingsDoc["self_clean_utc_offset"] = sys.selfCleanUtcOffsetMinutes;
+    settingsDoc["self_clean_dst"] = sys.selfCleanDstEnabled;
+    settingsDoc["push_enabled"]  = sys.pushEnabled;
+    settingsDoc["push_topic"]    = sys.pushTopic;
     String out;
     serializeJson(settingsDoc, out);
     return out;
@@ -285,6 +313,13 @@ static void handleApiSet(WiFiClient& client, const String& body) {
     int tankLow = sys.tankLowSetpointF;
     int tankHigh = sys.tankHighSetpointF;
     int envUnits = sys.envUnitsMetric;
+    bool selfCleanEnabled = sys.selfCleanEnabled;
+    int selfCleanInterval = sys.selfCleanIntervalBurns;
+    int selfCleanStartHour = sys.selfCleanStartHour;
+    int selfCleanEndHour = sys.selfCleanEndHour;
+    int selfCleanUtcOffset = sys.selfCleanUtcOffsetMinutes;
+    bool selfCleanDst = sys.selfCleanDstEnabled;
+    bool selfCleanRunNow = false;
 
     if (doc.containsKey("exhaust_setpoint")) exhaustSetpoint = doc["exhaust_setpoint"];
     if (doc.containsKey("deadband")) deadband = doc["deadband"];
@@ -298,6 +333,13 @@ static void handleApiSet(WiFiClient& client, const String& body) {
     if (doc.containsKey("tank_low")) tankLow = doc["tank_low"];
     if (doc.containsKey("tank_high")) tankHigh = doc["tank_high"];
     if (doc.containsKey("env_units")) envUnits = doc["env_units"];
+    if (doc.containsKey("self_clean_enabled")) selfCleanEnabled = doc["self_clean_enabled"];
+    if (doc.containsKey("self_clean_interval")) selfCleanInterval = doc["self_clean_interval"];
+    if (doc.containsKey("self_clean_start_hour")) selfCleanStartHour = doc["self_clean_start_hour"];
+    if (doc.containsKey("self_clean_end_hour")) selfCleanEndHour = doc["self_clean_end_hour"];
+    if (doc.containsKey("self_clean_utc_offset")) selfCleanUtcOffset = doc["self_clean_utc_offset"];
+    if (doc.containsKey("self_clean_dst")) selfCleanDst = doc["self_clean_dst"];
+    if (doc.containsKey("self_clean_run_now")) selfCleanRunNow = doc["self_clean_run_now"];
     if (!validExhaustSetpoint(exhaustSetpoint) ||
         !validDeadband(deadband) ||
         !validBoostTime(boostTime) ||
@@ -313,7 +355,11 @@ static void handleApiSet(WiFiClient& client, const String& body) {
         !validTankSetpoint(tankHigh) ||
         tankLow >= tankHigh ||
         tankHigh >= 190 ||
-        (envUnits != 0 && envUnits != 1)) {
+        (envUnits != 0 && envUnits != 1) ||
+        !validSelfCleanInterval(selfCleanInterval) ||
+        !validSelfCleanHour(selfCleanStartHour) ||
+        !validSelfCleanHour(selfCleanEndHour) ||
+        !validSelfCleanUtcOffset(selfCleanUtcOffset)) {
         sendJson(client, "{\"error\":\"configuration value out of range\"}");
         return;
     }
@@ -381,6 +427,60 @@ static void handleApiSet(WiFiClient& client, const String& body) {
         sys.uiNeedsRefresh = true;
         changed = true;
     }
+    if (doc.containsKey("self_clean_enabled") ||
+        doc.containsKey("self_clean_interval") ||
+        doc.containsKey("self_clean_start_hour") ||
+        doc.containsKey("self_clean_end_hour") ||
+        doc.containsKey("self_clean_utc_offset") ||
+        doc.containsKey("self_clean_dst")) {
+        sys.selfCleanEnabled = selfCleanEnabled;
+        sys.selfCleanIntervalBurns = (uint16_t)selfCleanInterval;
+        sys.selfCleanStartHour = (uint8_t)selfCleanStartHour;
+        sys.selfCleanEndHour = (uint8_t)selfCleanEndHour;
+        sys.selfCleanUtcOffsetMinutes = (int16_t)selfCleanUtcOffset;
+        sys.selfCleanDstEnabled = selfCleanDst;
+        if (!sys.selfCleanEnabled) {
+            sys.selfCleanDue = false;
+            sys.selfCleanActive = false;
+            sys.selfCleanManualRequested = false;
+            sys.selfCleanBurnCount = 0;
+        }
+        eeprom_saveSelfClean();
+        changed = true;
+    }
+    if (selfCleanRunNow && sys.selfCleanEnabled) {
+        sys.selfCleanManualRequested = true;
+        changed = true;
+    }
+
+    // === PUSH NOTIFICATIONS ===
+    bool pushChanged = false;
+    if (doc.containsKey("push_enabled")) {
+        sys.pushEnabled = (doc["push_enabled"] | 0) != 0;
+        pushChanged = true;
+    }
+    if (doc.containsKey("push_topic")) {
+        const char* t = doc["push_topic"] | "";
+        char clean[33];
+        uint8_t n = 0;
+        for (const char* p = t; *p && n < 32; p++) {
+            char c = *p;
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '_') {
+                clean[n++] = c;
+            }
+        }
+        clean[n] = '\0';
+        strncpy(sys.pushTopic, clean, sizeof(sys.pushTopic) - 1);
+        sys.pushTopic[sizeof(sys.pushTopic) - 1] = '\0';
+        pushChanged = true;
+    }
+    if (pushChanged) {
+        if (sys.pushTopic[0] == '\0') sys.pushEnabled = false;
+        eeprom_savePushNotify();
+        changed = true;
+    }
+
     if (changed) {
         sys.remoteChanged = true;
     }
@@ -391,7 +491,7 @@ static void handleApiSet(WiFiClient& client, const String& body) {
 static void handleApiProbe(WiFiClient& client, const String& body) {
     StaticJsonDocument<192> doc;
     if (deserializeJson(doc, body)) {
-        sendJson(client, "{\"error\":\"invalid JSON\"}");
+        StaticJsonDocument<1024> doc;
         return;
     }
 
@@ -546,6 +646,14 @@ void wifiapi_loop() {
     else if (req.startsWith("POST /api/reset")) {
         if (hasApiToken(headers)) {
             handleApiReset(client);
+        } else {
+            sendUnauthorized(client);
+        }
+    }
+    else if (req.startsWith("POST /api/push_test")) {
+        if (hasApiToken(headers)) {
+            bool ok = pushnotify_sendTest();
+            sendJson(client, ok ? "{\"ok\":true}" : "{\"error\":\"push failed - check topic and WiFi\"}");
         } else {
             sendUnauthorized(client);
         }

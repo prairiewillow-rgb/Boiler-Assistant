@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Sensor Module (v3.3 "Total Domination")
+ *  Boiler Assistant – Sensor Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI, MQTT, or EEPROM logic
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 

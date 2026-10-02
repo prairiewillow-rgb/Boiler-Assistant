@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – MQTT Client Module (v3.3 "Total Domination")
+ *  Boiler Assistant – MQTT Client Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - Reconnect logic is rate‑limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -274,8 +274,11 @@ static void mqtt_publishState() {
 
     doc["ember_guardian_active"] = sys.emberGuardianActive;
 
+    // Remaining time is meaningful while the countdown timer is running
+    // (emberGuardianActive stays false until the latch trips, so gating on
+    // it published 0 for the entire countdown).
     long remainingMs = 0;
-    if (sys.emberGuardianActive && sys.emberGuardianTimerMinutes > 0) {
+    if (sys.emberGuardianTimerActive && sys.emberGuardianTimerMinutes > 0) {
         unsigned long now = millis();
         unsigned long total = (unsigned long)sys.emberGuardianTimerMinutes * 60000UL;
         long elapsed = (long)(now - sys.emberGuardianStartMs);

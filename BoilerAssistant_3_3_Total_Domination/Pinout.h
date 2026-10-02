@@ -31,10 +31,11 @@
  *        - Primary I2C bus (A4/A5) drives LCD, BME280, keypad.
  *        - DS18B20 sensors share a single OneWire bus on D8.
  *        - MAX31855 thermocouples use hardware SPI (D12/D13).
- *        - Fan output uses a PWM‑capable pin on UNO R4.
+ *        - Fan output on D5: zero-cross synchronized PSM phase control
+ *          when a valid Z-C signal is present on D0, legacy PWM otherwise.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 

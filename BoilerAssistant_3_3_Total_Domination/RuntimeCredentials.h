@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – Runtime Credentials API (v3.1 "Total Domination")
+ *  Boiler Assistant – Runtime Credentials API (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: RuntimeCredentials.h
  *  Author: The Architect Collective
@@ -22,7 +22,7 @@
  *      - All fields are fixed‑size arrays for deterministic storage.
  *
  *  Version:
- *      Boiler Assistant v3.1 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 

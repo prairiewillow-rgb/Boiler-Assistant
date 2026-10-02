@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – System Data Module (v3.3 "Total Domination")
+ *  Boiler Assistant – System Data Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *      - All fields are explicitly initialized for deterministic boot
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -228,6 +228,7 @@ void systemdata_init()
     for (uint8_t i = 0; i < BURN_HISTORY_COUNT; i++) {
         sys.burnHistoryDurationSec[i] = 0;
         sys.burnHistoryIntervalSec[i] = 0;
+        sys.burnHistoryStartElapsedMin[i] = 0;
         sys.burnHistoryWaterTempF[i] = -1;
     }
     sys.burnHistoryCount  = 0;
@@ -243,6 +244,21 @@ void systemdata_init()
 
     /* UPTIME */
     sys.uptimeMs = 0;
+
+    sys.selfCleanEnabled = false;
+    sys.selfCleanDue = false;
+    sys.selfCleanActive = false;
+    sys.selfCleanManualRequested = false;
+    sys.selfCleanBurnCount = 0;
+    sys.selfCleanIntervalBurns = 30;
+    sys.selfCleanStartHour = 23;
+    sys.selfCleanEndHour = 6;
+    sys.selfCleanUtcOffsetMinutes = -360;
+    sys.selfCleanDstEnabled = false;
+
+    /* PUSH NOTIFICATIONS */
+    sys.pushEnabled = false;
+    sys.pushTopic[0] = '\0';
 
     /* NETWORK / WIFI */
     sys.wifiOK = false;

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant – UI Module (v3.3 "Total Domination")
+ *  Boiler Assistant – UI Module (v3.3.2 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3 "Total Domination"
+ *      Boiler Assistant v3.3.2 "Total Domination"
  * ============================================================
  */
 
@@ -45,7 +45,7 @@
 #include <EEPROM.h>
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 → v3.0)
+ *  COMPATIBILITY SHIMS (v2.2 → v3.3.2)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8
@@ -382,9 +382,13 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
         long remainingMs = (long)total - (long)elapsed;
         if (remainingMs < 0) remainingMs = 0;
 
-        int remainingMin = (int)(remainingMs / 60000UL);
+        // M:SS so the countdown visibly ticks instead of sitting
+        // frozen on a whole-minute number.
+        unsigned long remSec = (unsigned long)remainingMs / 1000UL;
+        int remMin = (int)(remSec / 60UL);
+        int remSecOnly = (int)(remSec % 60UL);
 
-        snprintf(l4, 21, "EMBER GUARD IN %2dM", remainingMin);
+        snprintf(l4, 21, "EMBER GUARD %2d:%02d", remMin, remSecOnly);
     }
 
     lcd4(l1, l2, l3, l4);

@@ -41,4 +41,16 @@ inline bool validLockoutHours(int value) {
     return value >= 0 && value <= 99;
 }
 
+inline bool validSelfCleanInterval(int value) {
+    return value >= 1 && value <= 255;
+}
+
+inline bool validSelfCleanHour(int value) {
+    return value >= 0 && value <= 23;
+}
+
+inline bool validSelfCleanUtcOffset(int value) {
+    return value >= -720 && value <= 840;
+}
+
 #endif
