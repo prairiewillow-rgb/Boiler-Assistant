@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ WiFi Provisioning Module (v3.3.6 "Total Domination")
+ *  Boiler Assistant – WiFi Provisioning Module (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - AP mode is authoritative when STA fails or no creds exist
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

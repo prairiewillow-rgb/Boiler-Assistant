@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Fan Dimmer Module (v3.3.6 "Total Domination")
+ *  Boiler Assistant – Fan Dimmer Module (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *        BurnEngine; both call fan_dimmer_setPercent().
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 
@@ -43,9 +43,17 @@ static const uint32_t PSM_PULSE_WIDTH_US = 100UL;
 // 120V mains). Firing closer to the cross cannot latch the triac.
 static const uint32_t MIN_FIRE_DELAY_US = 1000UL;
 static const uint32_t END_GUARD_US = 300UL;
-static const uint32_t ZC_MIN_HALF_CYCLE_US = 7000UL;
-static const uint32_t ZC_MAX_HALF_CYCLE_US = 11000UL;
+// Valid half-cycle window tightened to real 60Hz mains (8333us) +/- ~4%.
+// The old 7000-11000us band was wide enough that random chatter on a
+// floating Z-C pin (modules with internal zero-cross, no Z-C wire) could
+// falsely validate and lock the output into the 20kHz phase timer,
+// starving the CPU and freezing the controller.
+static const uint32_t ZC_MIN_HALF_CYCLE_US = 8000UL;
+static const uint32_t ZC_MAX_HALF_CYCLE_US = 8700UL;
 static const uint32_t ZC_TIMEOUT_US = 25000UL;
+// Require this many CONSECUTIVE in-band half-cycles before trusting the
+// signal, and drop out of phase mode if intervals fall out of band.
+static const uint8_t ZC_REQUIRED_CONSECUTIVE = 8;
 
 static FspTimer phaseTimer;
 static bool phaseTimerReady = false;
@@ -74,8 +82,11 @@ static void fan_zeroCrossIsr() {
         if (intervalUs >= ZC_MIN_HALF_CYCLE_US &&
             intervalUs <= ZC_MAX_HALF_CYCLE_US) {
             measuredHalfCycleUs = intervalUs;
-            if (validZeroCrossIntervals < 3) validZeroCrossIntervals++;
+            // Consecutive in-band intervals build confidence in a real signal.
+            if (validZeroCrossIntervals < ZC_REQUIRED_CONSECUTIVE) validZeroCrossIntervals++;
         } else {
+            // Any out-of-band interval resets confidence to zero: noise on a
+            // floating pin can no longer accumulate scattered valid windows.
             validZeroCrossIntervals = 0;
         }
     }
@@ -189,11 +200,25 @@ void fan_dimmer_setPercent(int percent) {
 
     uint32_t nowUs = micros();
     bool zcIsValid = phaseTimerReady &&
-                     validIntervals >= 3 &&
+                     validIntervals >= ZC_REQUIRED_CONSECUTIVE &&
                      lastHalfCycleUs >= ZC_MIN_HALF_CYCLE_US &&
                      lastHalfCycleUs <= ZC_MAX_HALF_CYCLE_US &&
                      lastCrossUs != 0 &&
                      nowUs - lastCrossUs <= ZC_TIMEOUT_US;
+
+    // If the signal degrades while in phase mode (wire unplugged, or it was
+    // never a real Z-C source), drop back to plain PWM instead of staying in
+    // the starved 20kHz phase state.
+    if (outputUsesPhaseControl && !zcIsValid) {
+        phaseTimer.stop();
+        noInterrupts();
+        phaseControlEnabled = false;
+        interrupts();
+        outputUsesPhaseControl = false;
+        pinMode(PIN_FAN_PWM, OUTPUT);
+        analogWrite(PIN_FAN_PWM, (long)percent * 255L / 100L);
+        return;
+    }
 
     if (zcIsValid) {
         if (!outputUsesPhaseControl) {

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant - Push Notifications (v3.3.6 "Total Domination")
+ *  Boiler Assistant - Push Notifications (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: PushNotify.h
  *  License: CC BY-NC-SA 4.0
@@ -12,7 +12,7 @@
  *  A dashboard test button sends a test notification.
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

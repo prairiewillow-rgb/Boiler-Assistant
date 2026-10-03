@@ -24,7 +24,7 @@
  *      - API unchanged and fully backward compatible
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

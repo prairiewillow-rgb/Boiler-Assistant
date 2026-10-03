@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ Sensor API (v3.3.6 "Total Domination")
+ *  Boiler Assistant – Sensor API (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.h
  *  Author: The Architect Collective
@@ -22,7 +22,7 @@
  *      - All implementation resides in Sensors.cpp
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ EEPROM Storage Module (v3.3.6 "Total Domination")
+ *  Boiler Assistant – EEPROM Storage Module (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

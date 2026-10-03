@@ -35,7 +35,7 @@
  *          when a valid Z-C signal is present on D0, legacy PWM otherwise.
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant â€“ System State API (v3.3.6 "Total Domination")
+ *  Boiler Assistant – System State API (v3.3.7 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemState.h
  *  Author: The Architect Collective
@@ -25,7 +25,7 @@
  *      - All modules must treat these enums as canonical.
  *
  *  Version:
- *      Boiler Assistant v3.3.6 "Total Domination"
+ *      Boiler Assistant v3.3.7 "Total Domination"
  * ============================================================
  */
 
