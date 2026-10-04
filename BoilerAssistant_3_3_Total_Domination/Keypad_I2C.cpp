@@ -28,7 +28,7 @@
  *      - All timing uses millis() and remains nonâ€‘blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

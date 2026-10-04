@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – Fan Dimmer Module (v3.3.7 "Total Domination")
+ *  Boiler Assistant – Fan Dimmer Module (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *        BurnEngine; both call fan_dimmer_setPercent().
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

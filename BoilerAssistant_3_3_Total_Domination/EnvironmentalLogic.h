@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – Environmental Logic (v3.3.7 "Total Domination")
+ *  Boiler Assistant – Environmental Logic (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EnvironmentalLogic.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -16,7 +16,7 @@
  *          â€¢ Tank HIGH / LOW water setpoints (per season)
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

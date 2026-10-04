@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – Fan Dimmer API (v3.3.7 "Total Domination")
+ *  Boiler Assistant – Fan Dimmer API (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.h
  *  License: CC BY-NC-SA 4.0
@@ -10,7 +10,7 @@
  *  phase control or legacy PWM automatically.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

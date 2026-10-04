@@ -27,7 +27,7 @@
  *      - Reconnect logic is rateâ€‘limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

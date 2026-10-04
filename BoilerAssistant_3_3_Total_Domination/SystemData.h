@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – System Data API (v3.3.7 "Total Domination")
+ *  Boiler Assistant – System Data API (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.h
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *      - All modules must treat SystemData as authoritative.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – System Data Module (v3.3.7 "Total Domination")
+ *  Boiler Assistant – System Data Module (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *      - All fields are explicitly initialized for deterministic boot
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – Burn Engine Public API (v3.3.7 "Total Domination")
+ *  Boiler Assistant – Burn Engine Public API (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.h
  *  Author: The Architect Collective
@@ -35,7 +35,7 @@
  *        fully owned by the Burn Engine module.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

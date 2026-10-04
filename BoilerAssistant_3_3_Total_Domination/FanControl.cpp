@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – Fan Control Module (v3.3.7 "Total Domination")
+ *  Boiler Assistant – Fan Control Module (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -33,7 +33,7 @@
  *      - Output is always deterministic and operatorâ€‘visible.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 

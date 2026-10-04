@@ -26,7 +26,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 
@@ -70,6 +70,7 @@ extern void eeprom_saveDeadzone(uint8_t mode);
 extern void eeprom_saveFlueLow(int v);
 extern void eeprom_saveFlueRecovery(int v);
 extern void eeprom_saveBoostTime(int v);
+extern void eeprom_saveDeadband(int v);
 
 // environmental EEPROM hooks
 extern void eeprom_saveEnvSeasonStarts();
@@ -1240,6 +1241,7 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
                     if (v < 1) v = 1;
                     if (v > 100) v = 100;
                     sys.deadbandF = v;
+                    eeprom_saveDeadband(v);
                 }
                 deadbandEditValue = "";
                 uiState = UI_CLAMP_DEADBAND_MENU;

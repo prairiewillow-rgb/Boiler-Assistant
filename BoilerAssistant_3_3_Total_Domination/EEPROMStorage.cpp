@@ -1,6 +1,6 @@
 ﻿/*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage Module (v3.3.7 "Total Domination")
+ *  Boiler Assistant – EEPROM Storage Module (v3.3.8 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3.7 "Total Domination"
+ *      Boiler Assistant v3.3.8 "Total Domination"
  * ============================================================
  */
 
@@ -306,9 +306,24 @@ void eeprom_init() {
         sys.envTankHighExtremeF = 185;
     }
 
+    // If MAGIC + VERSION are present but the CRC does not match, a real
+    // config was torn by a power cut mid-write. Do NOT factory-reset: keep
+    // the values already loaded and clamped above (each field was forced to
+    // a safe range), then re-commit a valid CRC. Only a field that was
+    // actually mid-write is lost; everything else survives. A truly blank
+    // EEPROM (no MAGIC/VERSION) still gets factory defaults.
+    bool magicPresent = EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC &&
+                        EEPROM.read(EEPROM_VERSION_ADDR) == EEPROM_VERSION;
+
     if (!eeprom_configValid()) {
-        systemdata_init();
-        eeprom_saveDefaultConfig();
+        if (magicPresent) {
+            // Torn write: persist the clamped values back out with a fresh CRC.
+            eeprom_markConfigValid();
+        } else {
+            // Fresh / blank EEPROM: load factory defaults.
+            systemdata_init();
+            eeprom_saveDefaultConfig();
+        }
     }
 
     sys.envUnitsMetric = EEPROM.read(EEPROM_ENV_UNITS_ADDR) == 1 ? 1 : 0;
