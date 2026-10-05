@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Burn Engine Public API (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Burn Engine Public API (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.h
  *  Author: The Architect Collective
@@ -10,18 +10,18 @@
  *  Description:
  *    Public interface for the Burn Engine subsystem. This header
  *    exposes the deterministic control entry points used by the
- *    main loop, UI, and any operatorâ€‘triggered actions.
+ *    main loop, UI, and any operator-triggered actions.
  *
  *    The Burn Engine implements two internal logic paths:
  *
- *      â€¢ AUTO TANK ENGINE
- *          - Tankâ€‘driven start/stop
+ *      - AUTO TANK ENGINE
+ *          - Tank-driven start/stop
  *          - Automatically enters IDLE when tank reaches high setpoint
  *
- *      â€¢ CONTINUOUS ENGINE
+ *      - CONTINUOUS ENGINE
  *          - Ignores tank temperature entirely
- *          - Never autoâ€‘stops
- *          - Never autoâ€‘enters IDLE
+ *          - Never auto-stops
+ *          - Never auto-enters IDLE
  *
  *    burnengine_compute() automatically dispatches to the correct
  *    engine based on sys.controlMode, following the Total Domination
@@ -35,7 +35,7 @@
  *        fully owned by the Burn Engine module.
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 

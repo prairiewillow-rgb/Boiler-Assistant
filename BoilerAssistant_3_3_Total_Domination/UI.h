@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant â€“ UI API (v3.3.6 "Total Domination")
+ *  Boiler Assistant - UI API (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.h
  *  Author: The Architect Collective
@@ -8,20 +8,22 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Public interface for the keypadâ€‘driven LCD UI subsystem.
+ *    Public interface for the keypad-driven LCD UI subsystem.
  *    This module exposes deterministic entry points for:
  *
- *      â€¢ ui_init()       â€” initialize LCD + boot screen
- *      â€¢ ui_handleKey()  â€” process keypad input and update UI state
- *      â€¢ ui_showScreen() â€” render the active UI state
+ *      - ui_init()       - initialize LCD + boot screen
+ *      - ui_handleKey()  - process keypad input and update UI state
+ *      - ui_showScreen() - render the active UI state
  *
  *    Architectural Notes:
  *      - All UI state definitions live in SystemState.h
  *      - No sensor, burn engine, or MQTT logic belongs here
- *      - Rendering is strictly operatorâ€‘facing and deterministic
+ *      - Rendering is strictly operator-facing and deterministic
+ *      - Checked LCD writes and recoverable current-screen repaint
+ *      - Cached network information; invalid BME shows a sensor error
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -43,7 +45,7 @@ void ui_init();
 /**
  * Handle keypad input and update UI state.
  *
- * @param key        The key pressed ('A', 'B', 'C', 'D', '0'â€“'9', '*', '#')
+ * @param key        The key pressed ('A', 'B', 'C', 'D', '0'-'9', '*', '#')
  * @param exhaustF   Current exhaust temperature
  * @param fanPercent Current fan percentage
  */

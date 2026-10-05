@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – WiFi Provisioning Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -14,20 +14,28 @@
  *    onboarding.
  *
  *    Responsibilities:
- *      â€¢ STAâ€‘first connection using RuntimeCredentials
- *      â€¢ Automatic AP fallback with HTML provisioning portal
- *      â€¢ Safe credential parsing + EEPROM persistence
- *      â€¢ Factory reset with full credential wipe
- *      â€¢ Export MQTT credentials for MQTTClient.cpp
+ *      - STA-first connection using RuntimeCredentials
+ *      - Saved-network retries with 30/60/120s backoff during outages
+ *      - AP provisioning portal only when no saved credentials exist
+ *      - Safe credential parsing + EEPROM persistence
+ *      - Factory reset with full credential wipe
+ *      - Export MQTT credentials for MQTTClient.cpp
  *
  *    Architectural Notes:
  *      - No blocking delays beyond required WiFi operations
  *      - No dynamic allocation except small String buffers
  *      - SystemData is the single source of truth for WiFi status
- *      - AP mode is authoritative when STA fails or no creds exist
+ *      - Saved credentials never fall back to AP after a missed join
+ *      - One-second link checks; sockets restart after 5s stable link
+ *      - WiFi.setTimeout(0) skips the core's association wait; the
+ *        underlying modem commands are still synchronous
+ *      - Runtime AT waits are 3s per command, not a total loop bound
+ *      - Slow I/O is quarantined; bridge reset must be acknowledged
+ *        before staged cleanup/reconnect (compatible firmware required)
+ *      - UI/telemetry use cached network data; control uses cached UTC
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -35,10 +43,15 @@
 #include "RuntimeCredentials.h"
 #include "SystemData.h"
 #include "EEPROMStorage.h"   // <-- required for persistence
+#include "WiFiAPI.h"
+#include "MQTTClient.h"
+#include "PushNotify.h"
 
 #include <Arduino.h>
 #include <WiFiS3.h>
 #include <WiFiServer.h>
+#include <OTAUpdate.h>
+#include "OTAUpdater.h"
 
 extern SystemData sys;
 
@@ -57,6 +70,132 @@ const char* prov_mqtt_pass   = nullptr;
 static WiFiServer provServer(80);
 static bool apMode   = false;
 static bool newCreds = false;
+static unsigned long lastNetworkCheckMs = 0;
+static unsigned long lastJoinAttemptMs = 0;
+static unsigned long joinRetryMs = 30000UL;
+static unsigned long linkStableSinceMs = 0;
+static bool linkDetected = false;
+static bool servicesOnline = false;
+static IPAddress serviceIP;
+static int32_t cachedRSSI = 0;
+static unsigned long lastRSSIMs = 0;
+static unsigned long cachedUTC = 0;
+static unsigned long utcAnchorMs = 0;
+static unsigned long lastTimeAttemptMs = 0;
+static bool timeAttempted = false;
+static const unsigned long MODEM_RUNTIME_TIMEOUT_MS = 3000UL;
+enum BridgeRecovery { BRIDGE_NORMAL, BRIDGE_QUIET, BRIDGE_BOOT_WAIT,
+                      BRIDGE_CLOSE_HTTP, BRIDGE_CLOSE_MQTT, BRIDGE_CLOSE_PUSH };
+static BridgeRecovery bridgeRecovery = BRIDGE_NORMAL;
+static unsigned long bridgeRecoveryMs = 0;
+static unsigned long bridgeQuietIntervalMs = 15000UL;
+static bool bridgeWasReset = false;
+
+IPAddress wifi_prov_cachedIP() { return serviceIP; }
+int32_t wifi_prov_cachedRSSI() { return cachedRSSI; }
+
+unsigned long wifi_prov_cachedUTC() {
+    unsigned long elapsed = millis() - utcAnchorMs;
+    if (cachedUTC == 0 || elapsed >= 86400000UL) return 0;
+    return cachedUTC + elapsed / 1000UL;
+}
+
+bool wifi_prov_prepareIo() {
+    if (bridgeRecovery != BRIDGE_NORMAL || ota_isActive()) return false;
+    // This bounds AT response waits, not just TCP connection/association waits.
+    modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+    return true;
+}
+
+bool wifi_prov_prepareClientIo() {
+    if (bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT) return false;
+    if (ota_isActive()) {
+        // OTA explicitly closes runtime sockets after entering its safe state.
+        modem.timeout(MODEM_TIMEOUT);
+        return true;
+    }
+    modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+    return true;
+}
+
+void wifi_prov_finishIo(unsigned long startedMs, const char* source) {
+    if (ota_isActive() || bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT ||
+        millis() - startedMs < MODEM_RUNTIME_TIMEOUT_MS) return;
+    Serial.print("WiFi: slow/unresponsive modem operation: ");
+    Serial.println(source);
+    sys.wifiOK = false;
+    bridgeRecovery = BRIDGE_QUIET;
+    bridgeRecoveryMs = millis();
+    bridgeQuietIntervalMs = 15000UL;
+    bridgeWasReset = false;
+    // Do not issue socket-close commands into a possibly unfinished AT reply.
+    // Quiet period, acknowledged bridge reset and reboot wait precede cleanup.
+}
+
+static bool serviceBridgeRecovery() {
+    if (bridgeRecovery == BRIDGE_NORMAL) return false;
+    unsigned long now = millis();
+    if (bridgeRecovery == BRIDGE_QUIET) {
+        if (now - bridgeRecoveryMs < bridgeQuietIntervalMs) return true;
+        modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+        OTAUpdate bridge;
+        if (bridge.reset() != 0) {
+            Serial.println("WiFi: bridge reset not acknowledged; staying offline for 60s");
+            bridgeQuietIntervalMs = 60000UL;
+            bridgeRecoveryMs = millis();
+            return true;
+        }
+        Serial.println("WiFi: bridge reset acknowledged; waiting for reboot");
+        bridgeWasReset = true;
+        bridgeRecovery = BRIDGE_BOOT_WAIT;
+        bridgeRecoveryMs = millis();
+        return true;
+    }
+    if (bridgeRecovery == BRIDGE_BOOT_WAIT) {
+        if (now - bridgeRecoveryMs < 5000UL) return true;
+        bridgeRecovery = BRIDGE_CLOSE_HTTP;
+        return true;
+    }
+    modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+    unsigned long cleanupStartMs = millis();
+    if (bridgeRecovery == BRIDGE_CLOSE_HTTP) {
+        wifiapi_stop();
+        if (bridgeRecovery == BRIDGE_QUIET) return true;
+        bridgeRecovery = BRIDGE_CLOSE_MQTT;
+    } else if (bridgeRecovery == BRIDGE_CLOSE_MQTT) {
+        mqtt_stop();
+        if (bridgeRecovery == BRIDGE_QUIET) return true;
+        bridgeRecovery = BRIDGE_CLOSE_PUSH;
+    } else if (bridgeRecovery == BRIDGE_CLOSE_PUSH) {
+        pushnotify_networkLost();
+        if (bridgeRecovery == BRIDGE_QUIET) return true;
+        servicesOnline = false;
+        linkDetected = false;
+        serviceIP = IPAddress();
+        cachedRSSI = 0;
+        joinRetryMs = 30000UL;
+        lastJoinAttemptMs = bridgeWasReset ? millis() - joinRetryMs : millis();
+        bridgeRecovery = BRIDGE_NORMAL;
+        Serial.println("WiFi: socket cleanup complete; saved-network retries resume");
+    }
+    if (millis() - cleanupStartMs >= MODEM_RUNTIME_TIMEOUT_MS) {
+        bridgeRecovery = BRIDGE_QUIET;
+        bridgeRecoveryMs = millis();
+        bridgeQuietIntervalMs = 15000UL;
+        bridgeWasReset = false;
+        Serial.println("WiFi: socket cleanup stalled; quarantining bridge again");
+    }
+    return true;
+}
+
+static void beginStationAttempt() {
+    // Renesas WiFiS3 checks _timeout only after sending BEGINSTA. Zero skips
+    // its 10-second status spin; association/DHCP are checked on later passes.
+    WiFi.setTimeout(0);
+    WiFi.begin(runtimeCreds.ssid, runtimeCreds.pass);
+    lastJoinAttemptMs = millis();
+    Serial.println("WiFi: station join requested; control continues offline");
+}
 
 /* Simple HTML portal */
 static const char* PROV_HTML =
@@ -122,11 +261,11 @@ static void startAP() {
 }
 
 /* ============================================================
- *  INIT: STA-first, AP-fallback
+ *  INIT: saved STA retries, AP only without credentials
  * ============================================================ */
 
 void wifi_prov_init() {
-    Serial.println("WiFiProvisioning: init (STA-first, AP-fallback)");
+    Serial.println("WiFiProvisioning: init (saved STA retries; AP only without credentials)");
 
     sys.wifiOK = false;
     WiFi.setHostname("boilerassistant");
@@ -139,30 +278,11 @@ void wifi_prov_init() {
         WiFi.disconnect();
         delay(200);
 
-        WiFi.begin(runtimeCreds.ssid, runtimeCreds.pass);
-
-        unsigned long start = millis();
-        while (millis() - start < 8000) {
-            if (WiFi.status() == WL_CONNECTED) {
-                Serial.println("WiFiProvisioning: STA connected via runtime creds");
-                Serial.print("WiFiProvisioning: IP: ");
-                Serial.println(WiFi.localIP());
-                Serial.println("WiFiProvisioning: Dashboard: http://boilerassistant/");
-
-                apMode     = false;
-                sys.wifiOK = true;
-
-                prov_mqtt_server = runtimeCreds.mqttServer;
-                prov_mqtt_user   = runtimeCreds.mqttUser;
-                prov_mqtt_pass   = runtimeCreds.mqttPass;
-
-                return;
-            }
-            delay(200);
-        }
-
-        Serial.println("WiFiProvisioning: Runtime STA failed â†’ AP mode");
-        startAP();
+        apMode = false;
+        prov_mqtt_server = runtimeCreds.mqttServer;
+        prov_mqtt_user = runtimeCreds.mqttUser;
+        prov_mqtt_pass = runtimeCreds.mqttPass;
+        beginStationAttempt();
         return;
     }
 
@@ -180,6 +300,87 @@ bool wifi_prov_has_credentials() {
 
 bool wifi_prov_isAPMode() {
     return apMode;
+}
+
+void wifi_prov_networkLoop() {
+    if (apMode || !runtimeCreds.hasCredentials || runtimeCreds.ssid[0] == '\0') return;
+    if (cachedUTC != 0 && millis() - utcAnchorMs >= 86400000UL) {
+        cachedUTC = 0;
+        Serial.println("WiFi: cached clock expired; scheduled self-clean waits for time sync");
+    }
+    if (ota_isActive() || serviceBridgeRecovery()) return;
+    unsigned long now = millis();
+    if (now - lastNetworkCheckMs < 1000UL) return;
+    lastNetworkCheckMs = now;
+
+    unsigned long operationMs = millis();
+    bool connected = WiFi.status() == WL_CONNECTED;
+    wifi_prov_finishIo(operationMs, "WiFi status");
+    if (bridgeRecovery != BRIDGE_NORMAL) return;
+    IPAddress ip;
+    if (connected) {
+        operationMs = millis();
+        ip = WiFi.localIP();
+        wifi_prov_finishIo(operationMs, "WiFi IP");
+        if (bridgeRecovery != BRIDGE_NORMAL) return;
+        connected = ip != IPAddress(0, 0, 0, 0);
+    }
+
+    if (servicesOnline && (!connected || ip != serviceIP)) {
+        sys.wifiOK = false;
+        servicesOnline = false;
+        bridgeWasReset = false;
+        bridgeRecovery = BRIDGE_CLOSE_HTTP;
+        linkDetected = false;
+        lastJoinAttemptMs = millis();
+        joinRetryMs = 30000UL;
+        Serial.println("WiFi: link/IP lost; local control stays active");
+        serviceIP = IPAddress();
+        cachedRSSI = 0;
+        return;
+    }
+
+    if (connected) {
+        if (!linkDetected) {
+            linkDetected = true;
+            linkStableSinceMs = now;
+        }
+        // Avoid repeatedly opening sockets on a link that is flapping.
+        if (!servicesOnline && now - linkStableSinceMs >= 5000UL) {
+            sys.wifiOK = true;
+            servicesOnline = true;
+            serviceIP = ip;
+            joinRetryMs = 30000UL;
+            wifiapi_init();
+            Serial.print("WiFi: stable link restored. Dashboard IP: ");
+            Serial.println(ip);
+            return;
+        }
+        if (servicesOnline) {
+            if (!timeAttempted || now - lastTimeAttemptMs >= 60000UL) {
+                timeAttempted = true;
+                lastTimeAttemptMs = now;
+                unsigned long utc = WiFi.getTime();
+                if (utc != 0) {
+                    cachedUTC = utc;
+                    utcAnchorMs = millis();
+                } else {
+                    Serial.println("WiFi: time unavailable; retaining unexpired cached clock");
+                }
+            } else if (now - lastRSSIMs >= 15000UL) {
+                lastRSSIMs = now;
+                cachedRSSI = WiFi.RSSI();
+            }
+        }
+        return;
+    }
+
+    linkDetected = false;
+    sys.wifiOK = false;
+    if (now - lastJoinAttemptMs < joinRetryMs) return;
+    beginStationAttempt();
+    // A marginal network gets breathing room: 30s, 60s, then 120s.
+    joinRetryMs = min(joinRetryMs * 2UL, 120000UL);
 }
 
 /* ============================================================

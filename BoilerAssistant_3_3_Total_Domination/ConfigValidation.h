@@ -1,3 +1,21 @@
+/*
+ * ============================================================
+ *  Boiler Assistant - Configuration Validation (v3.3.9 "Total Domination")
+ *  ------------------------------------------------------------
+ *  File: ConfigValidation.h
+ *  Maintainer: Karl (Embedded Systems Architect)
+ *  License: CC BY-NC-SA 4.0
+ *
+ *  Description:
+ *    Shared inclusive range checks for exhaust, tank, fan,
+ *    seasonal, Guardian and self-clean settings. These helpers
+ *    validate individual values without modifying configuration.
+ *
+ *  Version:
+ *      Boiler Assistant v3.3.9 "Total Domination"
+ * ============================================================
+ */
+
 #ifndef CONFIG_VALIDATION_H
 #define CONFIG_VALIDATION_H
 

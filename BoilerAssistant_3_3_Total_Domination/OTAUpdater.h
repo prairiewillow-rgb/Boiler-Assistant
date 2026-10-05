@@ -1,3 +1,21 @@
+/*
+ * ============================================================
+ *  Boiler Assistant - OTA Updater API (v3.3.9 "Total Domination")
+ *  File: OTAUpdater.h
+ *  Maintainer: Karl (Embedded Systems Architect)
+ *  License: CC BY-NC-SA 4.0
+ *
+ *  Description:
+ *    Version checks, error results and firmware installation
+ *    with progress reporting. Installation enters the idle safe
+ *    state and intentionally blocks using OTA library timeouts.
+ *    Requires bridge firmware 0.5.0 or newer. Success reboots;
+ *    failures return to the operator interface.
+ *
+ *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ * ============================================================
+ */
+
 #ifndef OTA_UPDATER_H
 #define OTA_UPDATER_H
 

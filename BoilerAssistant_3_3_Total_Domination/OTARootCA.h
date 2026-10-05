@@ -1,7 +1,23 @@
+/*
+ * ============================================================
+ *  Boiler Assistant - OTA Trust Anchor (v3.3.9 "Total Domination")
+ *  File: OTARootCA.h
+ *  Maintainer: Karl (Embedded Systems Architect)
+ *  License: CC BY-NC-SA 4.0
+ *
+ *  Description:
+ *    Embedded public ISRG Root X1 certificate supplied to the
+ *    WiFi bridge for OTA HTTPS server authentication.
+ *    Contains no private key or user credential.
+ *
+ *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ * ============================================================
+ */
+
 #ifndef OTA_ROOT_CA_H
 #define OTA_ROOT_CA_H
 
-// ISRG Root X1 — root of the Let's Encrypt chain used by raw.githubusercontent.com.
+// ISRG Root X1 - root of the Let's Encrypt chain used by raw.githubusercontent.com.
 static const char OTA_ROOT_CA[] =
 "-----BEGIN CERTIFICATE-----\n"
 "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"

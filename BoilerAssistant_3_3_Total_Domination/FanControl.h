@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Fan Control API (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Fan Control API (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.h
  *  Author: The Architect Collective
@@ -10,20 +10,20 @@
  *  Description:
  *    Public interface for deterministic fan control under the
  *    Total Domination Architecture (TDA). This module exposes
- *    the operatorâ€‘facing entry points used by the burn engine
+ *    the operator-facing entry points used by the burn engine
  *    and main loop, while all internal logic resides in the
  *    FanControl.cpp implementation.
  *
  *    Responsibilities:
- *      â€¢ Adaptive fan control for RAMP and HOLD states
- *      â€¢ BOOST override (100% output)
- *      â€¢ IDLE fan-off behavior
- *      â€¢ Deadzone fan modes:
+ *      - Adaptive fan control for RAMP and HOLD states
+ *      - BOOST override (100% output)
+ *      - IDLE fan-off behavior
+ *      - Deadzone fan modes:
  *            0 = fan allowed to turn OFF
  *            1 = fan always ON
- *      â€¢ Damper pre-fan delay (5 s) and 2-second startup kick
- *      â€¢ Guardian hard-kill (output = 0)
- *      â€¢ Deterministic smoothing of fan transitions
+ *      - Damper pre-fan delay (5 s) and 2-second startup kick
+ *      - Guardian hard-kill (output = 0)
+ *      - Deterministic smoothing of fan transitions
  *
  *  Architectural Notes:
  *      - This header exposes only the public API.
@@ -32,7 +32,7 @@
  *      - No UI, EEPROM, or WiFi logic belongs here.
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 

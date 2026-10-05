@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – EEPROM Storage Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - EEPROM Storage Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: EEPROMStorage.cpp
  *  Author: The Architect Collective
@@ -11,12 +11,12 @@
  *    EEPROM-backed configuration storage for the Boiler Assistant
  *    controller. This module owns all persistent settings for:
  *
- *      â€¢ Combustion parameters (setpoint, deadband, clamps)
- *      â€¢ Ember Guardian thresholds and timer
- *      â€¢ Environmental logic (season starts, hysteresis, setpoints)
- *      â€¢ Boiler control (tank low/high, run mode)
- *      â€¢ Probe role mapping
- *      â€¢ Runtime WiFi credentials
+ *      - Combustion parameters (setpoint, deadband, clamps)
+ *      - Ember Guardian thresholds and timer
+ *      - Environmental logic (season starts, hysteresis, setpoints)
+ *      - Boiler control (tank low/high, run mode)
+ *      - Probe role mapping
+ *      - Runtime WiFi credentials
  *
  *    Implements deterministic read/write helpers for multibyte
  *    values and enforces strict safety clamps to prevent invalid
@@ -29,7 +29,7 @@
  *      - This module contains no UI or control logic.
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -134,7 +134,7 @@ static void eeprom_saveDefaultConfig() {
 }
 
 /* ============================================================
- *  INIT â€” LOAD ALL SETTINGS YOU SAVE
+ *  INIT - LOAD ALL SETTINGS YOU SAVE
  * ============================================================ */
 
 void eeprom_init() {
@@ -193,16 +193,29 @@ void eeprom_init() {
     sys.selfCleanIntervalBurns = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 1);
     sys.selfCleanStartHour = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 2);
     sys.selfCleanEndHour = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 3);
-    uint8_t legacyOffset = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 4);
-    uint8_t legacyDst = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 5);
     int16_t storedUtcOffset = eeprom_read16(EEPROM_SELF_CLEAN_ADDR + 4);
-    if ((legacyDst == 0 || legacyDst == 1) &&
-        (int8_t)legacyOffset >= -12 && (int8_t)legacyOffset <= 14) {
-        sys.selfCleanUtcOffsetMinutes = (int16_t)(int8_t)legacyOffset * 60;
-        sys.selfCleanDstEnabled = legacyDst == 1;
-    } else {
+    uint8_t dstFlagNew = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 6);
+    // Format discriminator: the new layout stores minutes (16-bit) at +4/+5
+    // and DST at +6. The legacy layout stored hours (8-bit) at +4 and DST at
+    // +5. If +6 holds a valid DST value (0/1) AND the 16-bit minutes value is
+    // in range, this is the new format - use it as-is. Only fall back to the
+    // legacy interpretation when +6 has never been written by the new format.
+    bool isNewFormat = (dstFlagNew == 0 || dstFlagNew == 1) &&
+                       storedUtcOffset >= -720 && storedUtcOffset <= 840;
+    if (isNewFormat) {
         sys.selfCleanUtcOffsetMinutes = storedUtcOffset;
-        sys.selfCleanDstEnabled = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 6) == 1;
+        sys.selfCleanDstEnabled = dstFlagNew == 1;
+    } else {
+        uint8_t legacyOffset = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 4);
+        uint8_t legacyDst = EEPROM.read(EEPROM_SELF_CLEAN_ADDR + 5);
+        if ((legacyDst == 0 || legacyDst == 1) &&
+            (int8_t)legacyOffset >= -12 && (int8_t)legacyOffset <= 14) {
+            sys.selfCleanUtcOffsetMinutes = (int16_t)(int8_t)legacyOffset * 60;
+            sys.selfCleanDstEnabled = legacyDst == 1;
+        } else {
+            sys.selfCleanUtcOffsetMinutes = -360;
+            sys.selfCleanDstEnabled = false;
+        }
     }
 
     // === PROBE ROLES ===
@@ -234,10 +247,10 @@ void eeprom_init() {
     }
 
     /* ========================================================
-     *  SAFETY CLAMPS â€” PREVENT INVALID EEPROM VALUES
+     *  SAFETY CLAMPS - PREVENT INVALID EEPROM VALUES
      * ======================================================== */
 
-    // BOOST TIME — user-configured; 0 means skip straight to RAMP.
+    // BOOST TIME - user-configured; 0 means skip straight to RAMP.
     // Only reset to the default when the stored value is garbage.
     if (sys.boostTimeSeconds < 0 || sys.boostTimeSeconds > 600) {
         sys.boostTimeSeconds = 30;   // safe default

@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Sensor API (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Sensor API (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.h
  *  Author: The Architect Collective
@@ -11,18 +11,25 @@
  *    Public interface for the unified sensor subsystem. Provides
  *    deterministic access to:
  *
- *      â€¢ MAX31855 exhaust thermocouple (cached reads)
- *      â€¢ DS18B20 water probes (scan + read)
- *      â€¢ BME280 outdoor environmental sensor
+ *      - MAX31855 exhaust thermocouple (cached reads)
+ *      - DS18B20 water probes (scan + read)
+ *      - BME280 outdoor environmental sensor
  *
  *    Architectural Notes:
  *      - All live values are written directly into SystemData (sys.*)
- *      - No dynamic allocation or blocking delays
+ *      - BME280 bus interface is allocated once; startup waits advance
+ *        asynchronously with a 250ms calibration-busy deadline
+ *      - BME identity/configuration/raw sample checks precede readiness;
+ *        only a valid measurement marks it healthy, failures clear all values
+ *      - Missing/invalid BME retries every 30s without resetting LCD/keypad;
+ *        shared-bus held-line recovery remains owned by I2CBus
+ *      - Runtime OneWire rescans are capped at 250ms between searches
+ *        and twice MAX_WATER_PROBES addresses; retain old map on timeout
  *      - Probe roles resolved through sys.probeRoleMap
  *      - All implementation resides in Sensors.cpp
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -33,8 +40,10 @@
 #include "SystemState.h"
 #include "SystemData.h"
 
-// Initialize BME280, DS18B20, MAX31855
+// Start BME280 initialization; initialize the water-probe driver.
 bool sensors_init();
+// Advance environmental initialization/retry after shared-bus recovery.
+void sensors_loop();
 
 // Read MAX31855 (cached)
 double exhaust_readF_cached();

@@ -1,8 +1,8 @@
 /*
  * ============================================================
- *  Boiler Assistant – Master Hardware Parts List
+ *  Boiler Assistant - Master Hardware Parts List (v3.3.9)
  *  ------------------------------------------------------------
- *  File: HardwarePartsList.txt (documentation only)
+ *  File: HardwareManifest.h (reference documentation)
  *  Author: The Architect Collective
  *  License: CC BY-NC-SA 4.0
  *
@@ -68,7 +68,7 @@ Sensors:
 Thermocouples:
 - MAX31855 K-Type Thermocouple Amplifier
   https://a.co/d/0jifkXaX
-- K-Type Thermocouple Probe (100mm, -100°C to 1250°C)
+- K-Type Thermocouple Probe (100mm, -100 degrees C to 1250 degrees C)
   https://a.co/d/0fuPfVu2
 
 Future Development:

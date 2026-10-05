@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant â€“ MQTT Client Module (v3.3.6 "Total Domination")
+ *  Boiler Assistant - MQTT Client Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -10,24 +10,28 @@
  *  Description:
  *    Deterministic MQTT telemetry + command subsystem for the
  *    Boiler Assistant controller. Implements the Total Domination
- *    Architecture (TDA) for all networkâ€‘side communication.
+ *    Architecture (TDA) for all network-side communication.
  *
  *    Responsibilities:
- *      â€¢ Nonâ€‘blocking MQTT RX/TX loop
- *      â€¢ State, settings, water, and outdoor telemetry topics
- *      â€¢ Home Assistant autoâ€‘discovery publishing
- *      â€¢ CRCâ€‘validated remote command handling
- *      â€¢ Full SystemData integration (no legacy globals)
+ *      - Paced MQTT RX/TX with guarded synchronous WiFiS3 transport
+ *      - State, settings, water, and outdoor telemetry topics
+ *      - Home Assistant auto-discovery publishing
+ *      - CRC-validated remote command handling
+ *      - Full SystemData integration (no legacy globals)
  *
  *    Architectural Notes:
- *      - All MQTT operations are nonâ€‘blocking
- *      - No dynamic allocation beyond ArduinoJson buffers
+ *      - WiFiS3 transport operations remain synchronous
+ *      - TCP/MQTT connection timeouts request a 1-second bound each
+ *      - Keepalive is 15000 ms, not 15 ms; service cadence is 100 ms
+ *      - Discovery sends one entity per service pass
+ *      - Transport and JSON libraries allocate runtime buffers
+ *      - Quarantined transport suppresses further network operations
  *      - SystemData is the single source of truth
  *      - No burn logic, UI logic, or EEPROM logic lives here
- *      - Reconnect logic is rateâ€‘limited and deterministic
+ *      - Reconnect logic is rate-limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -50,6 +54,7 @@
 #include "RuntimeCredentials.h"
 #include "ConfigValidation.h"
 #include "BurnEngine.h"
+#include "RuntimeWiFiClient.h"
 
 #ifndef PROBE_ROLE_COUNT
 #define PROBE_ROLE_COUNT 8
@@ -82,11 +87,10 @@ static const char* HA_DEVICE_MODEL = "UNO R4 WiFi";
 static const char* HA_DEVICE_MFR   = "Karl";
 static const char* HA_DEVICE_SW    = "3.3";
 
-WiFiClient wifiClient;
+RuntimeWiFiClient<WiFiClient> wifiClient;
 MqttClient mqtt(wifiClient);
 
 static unsigned long lastStateFastMs      = 0;
-static unsigned long lastStateSlowMs      = 0;
 static unsigned long lastWaterMs          = 0;
 static unsigned long lastSettingsMs       = 0;
 static unsigned long lastOutdoorBmeMs     = 0;
@@ -96,6 +100,10 @@ static bool lastHighTemp = false;
 static bool lastTankFault = false;
 static bool lastExhaustFallback = false;
 static bool lastGuardian = false;
+static unsigned long lastMqttIoMs = 0;
+static bool discoveryActive = false;
+static uint8_t discoveryIndex = 0;
+static uint8_t discoveryCallIndex = 0;
 
 // Forward declarations
 static void mqtt_publishState();
@@ -149,7 +157,10 @@ void mqtt_init() {
 
     mqtt.setId(MQTT_CLIENT_ID);
     mqtt.setUsernamePassword(prov_mqtt_user, prov_mqtt_pass);
-    mqtt.setKeepAliveInterval(15);
+    // ArduinoMqttClient takes milliseconds, not seconds.
+    mqtt.setKeepAliveInterval(15000UL);
+    mqtt.setConnectionTimeout(1000UL);
+    wifiClient.setConnectionTimeout(1000);
     mqtt.onMessage(mqtt_onMessage);
 }
 
@@ -158,6 +169,8 @@ void mqtt_init() {
 // ============================================================
 
 void mqtt_stop() {
+    discoveryActive = false;
+    lastReconnectAttempt = millis();
     mqtt.stop();
     wifiClient.stop();
 }
@@ -166,40 +179,48 @@ void mqtt_loop() {
     if (wifi_prov_isAPMode()) return;
     if (!mqttAuthConfigured) return;
     if (!sys.wifiOK) return;
-    if (WiFi.status() != WL_CONNECTED) return;
+    unsigned long now = millis();
+    if (now - lastMqttIoMs < 100UL) return;
+    lastMqttIoMs = now;
 
     mqtt_reconnect();
     if (!mqtt.connected()) return;
 
     mqtt.poll();
 
-    unsigned long now = millis();
-
-    if (now - lastWaterMs > 1000) {
-        mqtt_publishWater();
-        lastWaterMs = now;
-    }
-
-    if (now - lastStateFastMs > 1000) {
-        mqtt_publishState();
-        lastStateFastMs = now;
+    if (discoveryActive) {
+        publishDiscovery();
+        return;
     }
 
     mqtt_publishAlertTransitions();
 
-    if (now - lastStateSlowMs > 30000) {
-        mqtt_publishState();
-        lastStateSlowMs = now;
-    }
-
-    if (now - lastSettingsMs > 60000) {
-        mqtt_publishSettings();
-        lastSettingsMs = now;
-    }
-
-    if (now - lastOutdoorBmeMs > 1000) {
-        mqtt_publishOutdoor();
-        lastOutdoorBmeMs = now;
+    static uint8_t nextPublisher = 0;
+    for (uint8_t checked = 0; checked < 4; ++checked) {
+        uint8_t publisher = nextPublisher;
+        nextPublisher = (nextPublisher + 1) % 4;
+        switch (publisher) {
+            case 0:
+                if (now - lastWaterMs <= 1000UL) break;
+                mqtt_publishWater();
+                lastWaterMs = now;
+                return;
+            case 1:
+                if (now - lastStateFastMs <= 1000UL) break;
+                mqtt_publishState();
+                lastStateFastMs = now;
+                return;
+            case 2:
+                if (now - lastSettingsMs <= 60000UL) break;
+                mqtt_publishSettings();
+                lastSettingsMs = now;
+                return;
+            case 3:
+                if (now - lastOutdoorBmeMs <= 1000UL) break;
+                mqtt_publishOutdoor();
+                lastOutdoorBmeMs = now;
+                return;
+        }
     }
 }
 
@@ -211,7 +232,6 @@ static void mqtt_reconnect() {
     unsigned long now = millis();
 
     if (!sys.wifiOK) return;
-    if (WiFi.status() != WL_CONNECTED) return;
     if (mqtt.connected()) return;
     if (now - lastReconnectAttempt < 30000) return;
 
@@ -219,7 +239,11 @@ static void mqtt_reconnect() {
 
     if (mqtt.connect(prov_mqtt_server, MQTT_PORT)) {
         mqtt.subscribe("boiler/cmd/#");
-        publishDiscovery();
+        discoveryIndex = 0;
+        discoveryActive = true;
+    } else {
+        Serial.print("MQTT: connection failed, code ");
+        Serial.println(mqtt.connectError());
     }
 }
 
@@ -256,7 +280,8 @@ static void mqtt_publishState() {
     doc["fan_pwm_percent"] = sys.fanFinal;
     doc["adaptive_slope"] = burnengine_getAdaptiveSlope();
     doc["state"]      = sys.burnState;
-    doc["rssi"]       = WiFi.RSSI();
+    if (wifi_prov_cachedRSSI() != 0) doc["rssi"] = wifi_prov_cachedRSSI();
+    else doc["rssi"] = nullptr;
 
     const char* phaseText =
         (sys.burnState == BURN_IDLE)        ? "IDLE" :
@@ -459,6 +484,7 @@ static void mqtt_publishOutdoor() {
 // ============================================================
 
 static void publishDiscovery() {
+    discoveryCallIndex = 0;
 
     publishDiscoverySensor("exhaust", "Exhaust Temp", TOPIC_STATE,
                            "{{value_json.exhaust}}", "Â°F", "temperature", "mdi:fire");
@@ -479,7 +505,7 @@ static void publishDiscovery() {
                            "{{value_json.state_text}}", "", nullptr, "mdi:fire");
 
     // ============================================================
-    // Ember Guardian v3.3 â€” ONLY new fields
+    // Ember Guardian v3.3 - ONLY new fields
     // ============================================================
 
     publishDiscoverySensor("ember_guardian_active", "Ember Guardian Active",
@@ -606,6 +632,9 @@ static void publishDiscovery() {
                            "boiler/cmd/tank_high", TOPIC_SETTINGS,
                            "Â°F", 80, 190, 1, nullptr, "mdi:water-boiler");
 
+    // Visit the same declaration list each time, but serialize/send only one
+    // entity per loop pass so reconnect discovery cannot monopolize the loop.
+    if (++discoveryIndex >= discoveryCallIndex) discoveryActive = false;
 }
 
 /* ============================================================
@@ -621,6 +650,7 @@ static void publishDiscoverySensor(
     const char* deviceClass,
     const char* icon
 ) {
+    if (discoveryCallIndex++ != discoveryIndex) return;
     char topic[128];
     snprintf(topic, sizeof(topic),
              "%s/sensor/%s/%s/config",
@@ -664,6 +694,7 @@ static void publishDiscoveryNumber(
     const char* deviceClass,
     const char* icon
 ) {
+    if (discoveryCallIndex++ != discoveryIndex) return;
     char topic[128];
     snprintf(topic, sizeof(topic),
              "%s/number/%s/%s/config",
@@ -706,6 +737,7 @@ static void publishDiscoverySwitch(
     const char* stateTopic,
     const char* icon
 ) {
+    if (discoveryCallIndex++ != discoveryIndex) return;
     char topic[128];
     snprintf(topic, sizeof(topic),
              "%s/switch/%s/%s/config",

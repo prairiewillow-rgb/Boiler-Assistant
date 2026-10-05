@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – System Data Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - System Data Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: SystemData.cpp
  *  Author: The Architect Collective
@@ -12,12 +12,12 @@
  *    accessors used by the UI and seasonal logic. This module
  *    also initializes all system defaults under the Total
  *    Domination Architecture (TDA), ensuring deterministic,
- *    operatorâ€‘visible startup behavior.
+ *    operator-visible startup behavior.
  *
  *    Responsibilities:
- *      â€¢ Own the global SystemData sys instance
- *      â€¢ Provide UI pointer helpers for seasonal parameters
- *      â€¢ Initialize all system defaults (tank, fan, exhaust,
+ *      - Own the global SystemData sys instance
+ *      - Provide UI pointer helpers for seasonal parameters
+ *      - Initialize all system defaults (tank, fan, exhaust,
  *        seasonal thresholds, Guardian, environmental sensors)
  *
  *    Architectural Notes:
@@ -26,7 +26,7 @@
  *      - All fields are explicitly initialized for deterministic boot
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -180,7 +180,7 @@ void systemdata_init()
     sys.envSetpointWinterF      = 500;
     sys.envSetpointExtremeF     = 525;
 
-    /* 6â€‘PARAMETER SEASONAL SYSTEM */
+    /* 6-PARAMETER SEASONAL SYSTEM */
     sys.envTankHighSummerF        = 170;
     sys.envTankLowSummerF         = 150;
     sys.envClampMaxSummerPercent  = 40;
@@ -244,6 +244,8 @@ void systemdata_init()
 
     /* UPTIME */
     sys.uptimeMs = 0;
+    sys.loopLastMs = sys.loopMaxMs = 0;
+    sys.networkLastMs = sys.networkMaxMs = 0;
 
     sys.selfCleanEnabled = false;
     sys.selfCleanDue = false;

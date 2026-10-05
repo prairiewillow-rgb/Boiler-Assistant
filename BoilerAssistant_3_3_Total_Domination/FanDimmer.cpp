@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Fan Dimmer Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Fan Dimmer Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.cpp
  *  Author: The Architect Collective
@@ -15,24 +15,28 @@
  *    PWM so existing installations keep working unchanged.
  *
  *    Responsibilities:
- *      â€¢ Zero-cross detection with half-cycle validation
- *      â€¢ Phase-fired PSM pulses timed from each zero-cross
- *      â€¢ Automatic fallback to analogWrite PWM when Z-C is absent
- *      â€¢ Non-blocking, timer/interrupt-driven output
+ *      - Zero-cross detection with half-cycle validation
+ *      - Phase-fired PSM pulses timed from each zero-cross
+ *      - Automatic fallback to analogWrite PWM when Z-C is absent
+ *      - Non-blocking, timer/interrupt-driven output
  *
  *  Architectural Notes:
  *      - This module owns the physical fan output pin only.
+ *      - Phase timer starts only with validated Z-C and nonzero demand.
+ *      - Excessive Z-C edges mask the input IRQ for one second;
+ *        main-loop servicing applies the existing PWM fallback.
  *      - Fan demand decisions live in FanControl; state logic in
  *        BurnEngine; both call fan_dimmer_setPercent().
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
 #include "FanDimmer.h"
 #include "Pinout.h"
 #include <FspTimer.h>
+#include <FspLinkIrq.h>
 
 static const float PHASE_TIMER_HZ = 20000.0f;
 // 100us gate pulse: on an inductive motor load the triac needs enough
@@ -66,6 +70,12 @@ static volatile uint32_t zeroCrossAtUs = 0;
 static volatile uint32_t previousZeroCrossAtUs = 0;
 static volatile uint32_t measuredHalfCycleUs = 8333UL;
 static volatile uint8_t validZeroCrossIntervals = 0;
+static int zeroCrossIrqIndex = -1;
+static volatile bool zeroCrossSuppressed = false;
+static volatile uint32_t zeroCrossSuppressedAtUs = 0;
+static volatile uint32_t edgeWindowUs = 0;
+static volatile uint8_t edgeWindowCount = 0;
+static bool noiseLogged = false;
 
 static uint32_t servicedZeroCrossSequence = 0;
 static uint32_t fireAtUs = 0;
@@ -75,6 +85,19 @@ static bool psmPulseHigh = false;
 
 static void fan_zeroCrossIsr() {
     uint32_t nowUs = micros();
+    if (nowUs - edgeWindowUs >= 10000UL) {
+        edgeWindowUs = nowUs;
+        edgeWindowCount = 0;
+    }
+    if (++edgeWindowCount > 32) {
+        validZeroCrossIntervals = 0;
+        zeroCrossSuppressed = true;
+        zeroCrossSuppressedAtUs = nowUs;
+        // Mask the already-resolved IRQ: no heap allocation or Serial in ISR.
+        if (zeroCrossIrqIndex >= 0)
+            NVIC_DisableIRQ(static_cast<IRQn_Type>(zeroCrossIrqIndex));
+        return;
+    }
     uint32_t previousUs = previousZeroCrossAtUs;
 
     if (previousUs != 0) {
@@ -118,7 +141,7 @@ static void fan_phaseTimerCallback(timer_callback_args_t*) {
         if (percent >= 100) {
             // Full power: hold the gate HIGH for the entire half-cycle.
             // 100% would otherwise fire 1ms after the zero-cross where
-            // voltage is too low to latch the triac on a motor load â€”
+            // voltage is too low to latch the triac on a motor load -
             // the fan hums but never spins. A solid gate makes 100%
             // behave like a hard-wired connection (matches the ZC
             // timeout fallback above).
@@ -168,9 +191,9 @@ bool fan_dimmer_init() {
                           fan_phaseTimerCallback,
                           nullptr) ||
         !phaseTimer.setup_overflow_irq() ||
-        !phaseTimer.open() ||
-        !phaseTimer.start()) {
+        !phaseTimer.open()) {
         phaseTimer.end();
+        Serial.println("Fan: phase timer unavailable; using PWM fallback");
         return false;
     }
 
@@ -178,15 +201,44 @@ bool fan_dimmer_init() {
     // INPUT_PULLUP: if the Z-C wire is loose or the module output is
     // open-collector, a floating pin would chatter and storm the ISR.
     pinMode(PIN_FAN_ZERO_CROSS, INPUT_PULLUP);
+    noInterrupts();
     attachInterrupt(digitalPinToInterrupt(PIN_FAN_ZERO_CROSS),
                     fan_zeroCrossIsr,
                     RISING);
+    zeroCrossIrqIndex = getIrqIndexFromPin(PIN_FAN_ZERO_CROSS);
+    interrupts();
+    if (zeroCrossIrqIndex < 0) {
+        detachInterrupt(digitalPinToInterrupt(PIN_FAN_ZERO_CROSS));
+        phaseTimer.end();
+        phaseTimerReady = false;
+        Serial.println("Fan: zero-cross IRQ unavailable; using PWM fallback");
+        return false;
+    }
     return true;
 }
 
 void fan_dimmer_setPercent(int percent) {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
+    if (zeroCrossSuppressed) {
+        if (!noiseLogged) {
+            noiseLogged = true;
+            Serial.println("Fan: zero-cross interrupt noise; PWM fallback, retry in 1s");
+        }
+        if (micros() - zeroCrossSuppressedAtUs >= 1000000UL) {
+            noInterrupts();
+            previousZeroCrossAtUs = zeroCrossAtUs = 0;
+            validZeroCrossIntervals = 0;
+            edgeWindowCount = 0;
+            edgeWindowUs = micros();
+            zeroCrossSuppressed = false;
+            R_BSP_IrqClearPending(static_cast<IRQn_Type>(zeroCrossIrqIndex));
+            NVIC_ClearPendingIRQ(static_cast<IRQn_Type>(zeroCrossIrqIndex));
+            NVIC_EnableIRQ(static_cast<IRQn_Type>(zeroCrossIrqIndex));
+            interrupts();
+            noiseLogged = false;
+        }
+    }
 
     uint32_t lastCrossUs;
     uint32_t lastHalfCycleUs;
@@ -200,6 +252,7 @@ void fan_dimmer_setPercent(int percent) {
 
     uint32_t nowUs = micros();
     bool zcIsValid = phaseTimerReady &&
+                     !zeroCrossSuppressed && percent > 0 &&
                      validIntervals >= ZC_REQUIRED_CONSECUTIVE &&
                      lastHalfCycleUs >= ZC_MIN_HALF_CYCLE_US &&
                      lastHalfCycleUs <= ZC_MAX_HALF_CYCLE_US &&
@@ -229,7 +282,12 @@ void fan_dimmer_setPercent(int percent) {
             phaseControlEnabled = true;
             interrupts();
             outputUsesPhaseControl = true;
-            phaseTimer.start();
+            if (!phaseTimer.start()) {
+                phaseControlEnabled = false;
+                outputUsesPhaseControl = false;
+                phaseTimerReady = false;
+                Serial.println("Fan: phase timer start failed; using PWM fallback");
+            }
         }
     }
 

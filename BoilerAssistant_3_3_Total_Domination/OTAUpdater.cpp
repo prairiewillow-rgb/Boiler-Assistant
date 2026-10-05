@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – OTA Updater (v3.3.8 "Total Domination")
+ *  Boiler Assistant - OTA Updater (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: OTAUpdater.cpp
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -92,6 +92,9 @@ const char* ota_installError() {
 }
 
 OtaCheckResult ota_checkForUpdate() {
+    // Interactive OTA keeps the library's normal timeout. Runtime I/O resets
+    // its shorter timeout before the next service pass.
+    modem.timeout(MODEM_TIMEOUT);
     latestVersion[0] = '\0';
     checkError[0] = '\0';
 
@@ -224,6 +227,7 @@ static bool ota_waitBridgeReady(unsigned long timeoutMs) {
 }
 
 OtaInstallResult ota_install(void (*progress)(int percent)) {
+    modem.timeout(MODEM_TIMEOUT);
     installError[0] = '\0';
 
     Serial.print("OTA wifi bridge fw: ");

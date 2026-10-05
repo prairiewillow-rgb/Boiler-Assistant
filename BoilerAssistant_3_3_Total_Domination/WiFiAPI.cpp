@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – WiFi JSON API Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - WiFi JSON API Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.cpp
  *  Author: The Architect Collective
@@ -8,27 +8,29 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Deterministic, nonâ€‘blocking WiFi + HTTP JSON API subsystem
+ *    Incrementally serviced WiFi + HTTP JSON API subsystem
  *    for the UNO R4 WiFi. Implements the Total Domination
- *    Architecture (TDA) for all networkâ€‘side operator access.
+ *    Architecture (TDA) for all network-side operator access.
  *
  *    Responsibilities:
- *      â€¢ Safe WiFi autoâ€‘retry (5s cooldown)
- *      â€¢ Minimal HTTP server on port 80
- *      â€¢ JSON endpoints:
+ *      - Safe WiFi auto-retry (5s cooldown)
+ *      - Minimal HTTP server on port 80
+ *      - JSON endpoints:
  *          - GET  /api/state
  *          - GET  /api/settings
  *          - POST /api/set
- *      â€¢ Remote writeâ€‘back to SystemData with remoteChanged flag
+ *      - Remote write-back to SystemData with remoteChanged flag
  *
  *    Architectural Notes:
- *      - No blocking delays
- *      - No dynamic allocation beyond ArduinoJson buffers
+ *      - Up to 256 request bytes or 512 response bytes per loop pass
+ *      - 1 KiB header/body limits; 2s receive and 12s send deadlines
+ *      - WiFiS3 modem operations themselves are still synchronous
+ *      - String storage is released between requests
  *      - Provisioning-aware: disabled in AP mode
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -41,11 +43,13 @@
 #include "DashboardHTML.h"
 #include "BurnEngine.h"
 #include "PushNotify.h"
+#include "RuntimeWiFiClient.h"
 
 #include <WiFiS3.h>
 #include <WiFiServer.h>
 #include <WiFiClient.h>
 #include <ArduinoJson.h>
+#include <utility>
 
 extern SystemData sys;
 
@@ -71,6 +75,72 @@ static const char* getWifiPASS() {
 
 WiFiServer server(80);
 
+enum HttpPhase { HTTP_IDLE, HTTP_RECEIVING, HTTP_SENDING };
+static HttpPhase httpPhase = HTTP_IDLE;
+static RuntimeWiFiClient<WiFiClient> httpClient;
+static String httpHeaders;
+static String httpBody;
+static char httpResponseHeaders[256];
+static size_t httpResponseHeaderLength = 0;
+static String httpResponseBody;
+static const char* httpResponseData = nullptr;
+static size_t httpResponseLength = 0;
+static size_t httpResponseOffset = 0;
+static size_t httpHeaderOffset = 0;
+static bool httpHeadersComplete = false;
+static int httpContentLength = 0;
+static unsigned long httpStartedMs = 0;
+static unsigned long httpLastWriteMs = 0;
+static unsigned long httpLastReadMs = 0;
+static const size_t HTTP_HEADER_LIMIT = 1024;
+static const size_t HTTP_BODY_LIMIT = 1024;
+static const size_t HTTP_READ_CHUNK = 256;
+static const size_t HTTP_WRITE_CHUNK = 512;
+static const unsigned long HTTP_RECEIVE_TIMEOUT_MS = 2000UL;
+static const unsigned long HTTP_SEND_TIMEOUT_MS = 12000UL;
+
+static void closeHttp() {
+    httpClient.stop();
+    httpHeaders = String();
+    httpBody = String();
+    httpResponseHeaderLength = 0;
+    httpResponseBody = String();
+    httpResponseData = nullptr;
+    httpPhase = HTTP_IDLE;
+}
+
+static void queueResponse(const char* status, const char* contentType,
+                          const char* data, size_t length) {
+    int headerLength = snprintf(httpResponseHeaders, sizeof(httpResponseHeaders),
+        "HTTP/1.1 %s\r\nContent-Type: %s\r\nCache-Control: no-store\r\n"
+        "Connection: close\r\nContent-Length: %u\r\n\r\n",
+        status, contentType, static_cast<unsigned int>(length));
+    if (headerLength < 0 || static_cast<size_t>(headerLength) >= sizeof(httpResponseHeaders)) {
+        Serial.println("WiFiAPI: response headers exceeded buffer");
+        closeHttp();
+        return;
+    }
+    httpResponseHeaderLength = headerLength;
+    httpResponseData = data;
+    httpResponseLength = length;
+    httpResponseOffset = httpHeaderOffset = 0;
+    httpStartedMs = millis();
+    httpLastWriteMs = millis() - 10UL;
+    httpPhase = HTTP_SENDING;
+}
+
+static void queueJson(const char* status, String json) {
+    if (!json) {
+        Serial.println("WiFiAPI: response allocation failed");
+        static const char error[] = "{\"error\":\"insufficient memory\"}";
+        queueResponse("503 Service Unavailable", "application/json", error, sizeof(error) - 1);
+        return;
+    }
+    httpResponseBody = std::move(json);
+    queueResponse(status, "application/json",
+                  httpResponseBody.c_str(), httpResponseBody.length());
+}
+
 /* ============================================================
  *  Retry Timer
  * ============================================================ */
@@ -87,26 +157,16 @@ static StaticJsonDocument<512> settingsDoc;
  *  Helpers
  * ============================================================ */
 
-static void sendJson(WiFiClient& client, const String& json) {
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: application/json");
-    client.println("Connection: close");
-    client.println();
-    client.print(json);
+static void sendJson(WiFiClient&, String json) {
+    queueJson("200 OK", std::move(json));
 }
 
-static void sendNotFound(WiFiClient& client) {
-    client.println("HTTP/1.1 404 Not Found");
-    client.println("Connection: close");
-    client.println();
+static void sendNotFound(WiFiClient&) {
+    queueJson("404 Not Found", "{\"error\":\"not found\"}");
 }
 
-static void sendUnauthorized(WiFiClient& client) {
-    client.println("HTTP/1.1 401 Unauthorized");
-    client.println("Content-Type: application/json");
-    client.println("Connection: close");
-    client.println();
-    client.println("{\"error\":\"authentication required\"}");
+static void sendUnauthorized(WiFiClient&) {
+    queueJson("401 Unauthorized", "{\"error\":\"authentication required\"}");
 }
 
 static bool hasApiToken(const String& headers) {
@@ -118,15 +178,30 @@ static bool hasApiToken(const String& headers) {
 }
 
 static int requestContentLength(const String& headers) {
-    int marker = headers.indexOf("Content-Length:");
-    if (marker < 0) return 0;
-
-    marker += 15;
-    while (marker < headers.length() && headers[marker] == ' ') marker++;
-
-    int end = headers.indexOf('\n', marker);
-    if (end < 0) end = headers.length();
-    return headers.substring(marker, end).toInt();
+    int length = 0;
+    bool found = false;
+    int start = headers.indexOf("\r\n") + 2;
+    while (start >= 2 && start < (int)headers.length()) {
+        int end = headers.indexOf("\r\n", start);
+        if (end < 0 || end == start) break;
+        String line = headers.substring(start, end);
+        line.toLowerCase();
+        if (line.startsWith("transfer-encoding:")) return -1;
+        if (line.startsWith("content-length:")) {
+            if (found) return -1;
+            found = true;
+            String value = line.substring(15);
+            value.trim();
+            if (value.length() == 0) return -1;
+            for (unsigned int i = 0; i < value.length(); ++i) {
+                if (value[i] < '0' || value[i] > '9') return -1;
+                length = length * 10 + value[i] - '0';
+                if (length > (int)HTTP_BODY_LIMIT) return -1;
+            }
+        }
+        start = end + 2;
+    }
+    return length;
 }
 
 /* ============================================================
@@ -196,8 +271,17 @@ static String buildStateJson() {
     stateDoc["self_clean_interval"] = sys.selfCleanIntervalBurns;
     stateDoc["push_enabled"]  = sys.pushEnabled;
     stateDoc["push_configured"] = sys.pushEnabled && sys.pushTopic[0] != '\0';
+    stateDoc["push_status"] = pushnotify_status();
+    stateDoc["loop_last_ms"] = sys.loopLastMs;
+    stateDoc["loop_max_ms"] = sys.loopMaxMs;
+    stateDoc["network_last_ms"] = sys.networkLastMs;
+    stateDoc["network_max_ms"] = sys.networkMaxMs;
 
-    stateDoc["rssi"]           = WiFi.RSSI();
+    if (sys.wifiOK && wifi_prov_cachedRSSI() != 0) {
+        stateDoc["rssi"] = wifi_prov_cachedRSSI();
+    } else {
+        stateDoc["rssi"] = nullptr;
+    }
 
     JsonObject env = stateDoc.createNestedObject("env");
     env["temp_f"]   = sys.envTempF;
@@ -222,7 +306,11 @@ static String buildStateJson() {
 
 static String buildHistoryJson() {
     String out;
-    out.reserve(12000);
+    if (!out.reserve(96 + sys.burnHistoryCount * 120 +
+                     sys.waterHistoryCount * 12)) {
+        Serial.println("WiFiAPI: insufficient memory for history response");
+        return "{\"error\":\"insufficient memory for history\"}";
+    }
     out += "{\"history_now_min\":";
     out += millis() / 60000UL;
     out += ",\"burn_history\":[";
@@ -539,86 +627,36 @@ void wifiapi_init() {
         sys.wifiOK = false;
         return;
     }
+    if (!sys.wifiOK || !wifi_prov_prepareIo()) return;
 
     // WiFiProvisioning owns connection setup. Starting WiFi again here can
     // block the control loop even though provisioning already connected.
+    unsigned long startedMs = millis();
     server.begin();
+    wifi_prov_finishIo(startedMs, "HTTP server start");
 }
 
 void wifiapi_stop() {
-    server.end();
+    if (httpPhase != HTTP_IDLE) closeHttp();
+    if (wifi_prov_prepareClientIo()) {
+        unsigned long startedMs = millis();
+        server.end();
+        wifi_prov_finishIo(startedMs, "HTTP server close");
+    }
 }
 
 /* ============================================================
  *  WiFi Loop
  * ============================================================ */
 
-void wifiapi_loop() {
-    if (wifi_prov_isAPMode()) {
-        sys.wifiOK = false;
-        return;
-    }
-
-    if (WiFi.status() != WL_CONNECTED) {
-        sys.wifiOK = false;
-        return;
-    }
-
-    IPAddress ip = WiFi.localIP();
-    if (ip == IPAddress(0, 0, 0, 0)) {
-        sys.wifiOK = false;
-        return;
-    }
-
-    sys.wifiOK = true;
-
-    static bool printed = false;
-    if (!printed) {
-        printed = true;
-        Serial.print("WiFiAPI: WiFi connected. IP: ");
-        Serial.println(ip);
-    }
-
-    WiFiClient client = server.available();
-    if (!client) return;
-
-    if (!client.available()) {
-        client.stop();
-        return;
-    }
-
-    client.setTimeout(5);
-    String req = client.readStringUntil('\r');
-    client.readStringUntil('\n');
-
-    String headers;
-    while (client.available()) {
-        String headerLine = client.readStringUntil('\n');
-        headers += headerLine;
-        if (headerLine == "\r" || headerLine.length() == 0) break;
-    }
-
-    String body = "";
-    if (req.startsWith("POST")) {
-        int contentLength = requestContentLength(headers);
-        unsigned long bodyStart = millis();
-
-        while ((contentLength == 0 || body.length() < contentLength) &&
-               millis() - bodyStart < 25UL) {
-            while (client.available() &&
-                   (contentLength == 0 || body.length() < contentLength)) {
-                body += (char)client.read();
-            }
-        }
-    }
-
+static void dispatchHttp() {
+    String req = httpHeaders.substring(0, httpHeaders.indexOf("\r\n"));
+    WiFiClient& client = httpClient;
+    const String& headers = httpHeaders;
+    const String& body = httpBody;
     if (req.startsWith("GET / HTTP") || req.startsWith("GET /dashboard")) {
-        client.println("HTTP/1.1 200 OK");
-        client.println("Content-Type: text/html; charset=utf-8");
-        client.println("Cache-Control: no-store");
-        client.println("Connection: close");
-        client.println();
-        client.write((const uint8_t*)DASHBOARD_HTML, strlen_P(DASHBOARD_HTML));
+        queueResponse("200 OK", "text/html; charset=utf-8",
+                      DASHBOARD_HTML, strlen_P(DASHBOARD_HTML));
     }
     else if (req.startsWith("GET /api/state")) {
         sendJson(client, buildStateJson());
@@ -653,7 +691,8 @@ void wifiapi_loop() {
     else if (req.startsWith("POST /api/push_test")) {
         if (hasApiToken(headers)) {
             bool ok = pushnotify_sendTest();
-            sendJson(client, ok ? "{\"ok\":true}" : "{\"error\":\"push failed - check topic and WiFi\"}");
+            sendJson(client, ok ? "{\"ok\":true,\"queued\":true}"
+                                : "{\"error\":\"push not queued - check topic, WiFi and queue status\"}");
         } else {
             sendUnauthorized(client);
         }
@@ -662,5 +701,110 @@ void wifiapi_loop() {
         sendNotFound(client);
     }
 
-    client.stop();
+    httpHeaders = String();
+    httpBody = String();
+}
+
+void wifiapi_loop() {
+    if (wifi_prov_isAPMode()) {
+        sys.wifiOK = false;
+        if (httpPhase != HTTP_IDLE) closeHttp();
+        return;
+    }
+
+    unsigned long now = millis();
+    if (!sys.wifiOK) {
+        if (httpPhase != HTTP_IDLE) closeHttp();
+        return;
+    }
+
+    if (httpPhase == HTTP_IDLE) {
+        static unsigned long lastAcceptMs = 0;
+        if (now - lastAcceptMs < 20UL) return;
+        lastAcceptMs = now;
+        unsigned long startedMs = millis();
+        httpClient = server.available();
+        wifi_prov_finishIo(startedMs, "HTTP accept");
+        if (!wifi_prov_prepareIo()) {
+            httpClient.stop();
+            return;
+        }
+        if (!httpClient) return;
+        now = millis();
+        httpHeadersComplete = false;
+        httpContentLength = 0;
+        httpStartedMs = now;
+        httpLastReadMs = now - 20UL;
+        httpPhase = HTTP_RECEIVING;
+    }
+
+    if (httpPhase == HTTP_SENDING) {
+        if (now - httpStartedMs >= HTTP_SEND_TIMEOUT_MS) {
+            Serial.println("WiFiAPI: response timed out; closing client");
+            closeHttp();
+            return;
+        }
+        if (now - httpLastWriteMs < 10UL) return;
+        httpLastWriteMs = now;
+        bool sendingHeaders = httpHeaderOffset < httpResponseHeaderLength;
+        const char* data = sendingHeaders ? httpResponseHeaders : httpResponseData;
+        size_t& offset = sendingHeaders ? httpHeaderOffset : httpResponseOffset;
+        size_t length = sendingHeaders ? httpResponseHeaderLength : httpResponseLength;
+        size_t count = min(HTTP_WRITE_CHUNK, length - offset);
+        if (count > 0) {
+            size_t written = httpClient.write(
+                reinterpret_cast<const uint8_t*>(data + offset), count);
+            if (written == 0) {
+                Serial.println("WiFiAPI: response write failed; closing client");
+                closeHttp();
+                return;
+            }
+            offset += written;
+        }
+        if (httpHeaderOffset == httpResponseHeaderLength &&
+            httpResponseOffset == httpResponseLength) closeHttp();
+        return;
+    }
+
+    if (now - httpStartedMs >= HTTP_RECEIVE_TIMEOUT_MS) {
+        Serial.println("WiFiAPI: incomplete request timed out");
+        queueJson("408 Request Timeout", "{\"error\":\"request timed out\"}");
+        return;
+    }
+
+    if (now - httpLastReadMs < 20UL) return;
+    httpLastReadMs = now;
+    int available = httpClient.available();
+    if (available <= 0) return;
+    uint8_t buffer[HTTP_READ_CHUNK];
+    size_t count = min(HTTP_READ_CHUNK, static_cast<size_t>(available));
+    int received = httpClient.read(buffer, count);
+    for (int i = 0; i < received; ++i) {
+        if (!httpHeadersComplete) {
+            if (httpHeaders.length() >= HTTP_HEADER_LIMIT ||
+                !httpHeaders.concat(static_cast<char>(buffer[i]))) {
+                Serial.println("WiFiAPI: headers too large or allocation failed");
+                queueJson("431 Request Header Fields Too Large",
+                          "{\"error\":\"headers too large\"}");
+                return;
+            }
+            if (httpHeaders.endsWith("\r\n\r\n")) {
+                httpHeadersComplete = true;
+                httpContentLength = requestContentLength(httpHeaders);
+                if (httpContentLength < 0) {
+                    Serial.println("WiFiAPI: unsupported or oversized request body");
+                    queueJson("400 Bad Request", "{\"error\":\"invalid content length or encoding\"}");
+                    return;
+                }
+            }
+        } else if (httpBody.length() < static_cast<unsigned int>(httpContentLength)) {
+            if (!httpBody.concat(static_cast<char>(buffer[i]))) {
+                Serial.println("WiFiAPI: request body allocation failed");
+                queueJson("503 Service Unavailable", "{\"error\":\"insufficient memory\"}");
+                return;
+            }
+        }
+    }
+    if (httpHeadersComplete &&
+        httpBody.length() == static_cast<unsigned int>(httpContentLength)) dispatchHttp();
 }

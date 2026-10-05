@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Burn Engine Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Burn Engine Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -8,25 +8,25 @@
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
- *    Core combustionâ€‘control logic for the Boiler Assistant controller.
+ *    Core combustion-control logic for the Boiler Assistant controller.
  *    Implements the Total Domination Architecture (TDA) for all burn
  *    states, transitions, and safety pathways. This module owns:
  *
  *      - BOOST, RAMP, HOLD, IDLE, and EMBER GUARD state logic
- *      - Exhaustâ€‘based demand computation (smooth + raw pipelines)
+ *      - Exhaust-based demand computation (smooth + raw pipelines)
  *      - Deadband fan control (Mode 0 and Mode 1)
  *      - Guardian timer, latch, and recovery logic
  *      - Dampers (inverted polarity, Version B)
- *      - Legacy v2.2 â†’ v3.x compatibility shims
+ *      - Legacy v2.2 -> v3.x compatibility shims
  *
  *  v3.3 Additions:
  *      - Standardized state transitions under TDA
  *      - Unified exhaust smoothing + control pathways
  *      - Guardian latch behavior aligned with SystemData contract
  *      - Deterministic fan clamping and demand shaping
- *      - Expanded documentation for openâ€‘source contributors
+ *      - Expanded documentation for open-source contributors
  *
- *  v3.3.8 Additions:
+ *  v3.3.9 Additions:
  *      - Automatic self-cleaning burn: after a configurable number of
  *        completed burns, one full-output burn runs inside the
  *        configured overnight window (local time zone + DST), capped
@@ -37,10 +37,10 @@
  *      - SystemData is the single source of truth for all parameters
  *      - Dampers are applied through this module; fan output is
  *        commanded through FanControl/FanDimmer
- *      - All timing uses millis() and remains strictly nonâ€‘blocking
+ *      - All timing uses millis() and remains strictly non-blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -53,6 +53,7 @@
 #include "Pinout.h"
 #include "EEPROMStorage.h"
 #include <WiFiS3.h>
+#include "WiFiProvisioning.h"
 #include "OTAUpdater.h"
 
 extern SystemData sys;
@@ -91,7 +92,7 @@ static const unsigned long SELF_CLEAN_MAX_MS = 3600000UL;
 static unsigned long selfCleanStartMs = 0;
 
 static bool selfCleanNightAllowed() {
-    unsigned long utc = WiFi.getTime();
+    unsigned long utc = wifi_prov_cachedUTC();
     if (utc == 0) return false;
 
     long localSeconds = (long)utc +
@@ -427,7 +428,7 @@ int burnengine_compute() {
 
 /* ============================================================
  *  HEAT-DEMAND HOLD DEMAND (v2.3-style)
- *  COLDER â†’ MORE fan, HOTTER â†’ LESS fan
+ *  COLDER -> MORE fan, HOTTER -> LESS fan
  * ============================================================ */
 static int burnengine_computeHoldDemand(double exhaustControlF,
                                         unsigned long now)
@@ -443,7 +444,7 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
     double high = sys.exhaustSetpoint + bandHalf;
 
     /* ============================================================
-     *  â­ NEW FIX: EXIT HOLD â†’ RAMP WHEN EXHAUST DROPS BELOW BAND
+     *  * NEW FIX: EXIT HOLD -> RAMP WHEN EXHAUST DROPS BELOW BAND
      * ============================================================ */
     double holdExit = low - HOLD_EXIT_HYSTERESIS_F;
     if (sys.burnState == BURN_HOLD && exhaustControlF < holdExit) {
@@ -463,10 +464,10 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
      * ============================================================ */
     if (sys.deadzoneFanMode == 1) {
         if (exhaustControlF <= low) {
-            return sys.clampMaxPercent;   // COLD â†’ MORE FAN
+            return sys.clampMaxPercent;   // COLD -> MORE FAN
         }
         if (exhaustControlF >= high) {
-            return sys.clampMinPercent;   // HOT â†’ LESS FAN
+            return sys.clampMinPercent;   // HOT -> LESS FAN
         }
 
         long d = map((long)exhaustControlF,
@@ -484,12 +485,12 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
         if (exhaustControlF < low) holdFanCalling = true;
         if (exhaustControlF >= sys.exhaustSetpoint) holdFanCalling = false;
 
-        // In band â†’ OFF, unless still recovering from below the band
+        // In band -> OFF, unless still recovering from below the band
         if (exhaustControlF >= low && exhaustControlF <= high) {
             return holdFanCalling ? sys.clampMinPercent : 0;
         }
 
-        // Below band â†’ scale from min clamp toward max clamp
+        // Below band -> scale from min clamp toward max clamp
         if (exhaustControlF < low) {
             double span = bandHalf > HOLD_RECOVERY_SPAN_F ? bandHalf : HOLD_RECOVERY_SPAN_F;
             double frac = ((low - exhaustControlF) / span) * adaptiveSlope;
@@ -499,7 +500,7 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
             return (int)pct;
         }
 
-        // Above band â†’ ramp down toward 0
+        // Above band -> ramp down toward 0
         if (exhaustControlF > high) {
             double span = bandHalf;
             double e    = exhaustControlF - high;
@@ -688,7 +689,7 @@ static int burnengine_computeAutoTank() {
         }
     }
 
-    /* BOOST â†’ RAMP */
+    /* BOOST -> RAMP */
     if (sys.burnState == BURN_BOOST) {
         unsigned long elapsed = now - sys.boostStartMs;
         if (!sys.boostActive ||
@@ -701,7 +702,7 @@ static int burnengine_computeAutoTank() {
         }
     }
 
-    /* RAMP â†’ HOLD (early entry) */
+    /* RAMP -> HOLD (early entry) */
     if (sys.burnState == BURN_RAMP) {
         if (!sys.rampTimerActive) {
             sys.rampTimerActive = true;
@@ -777,16 +778,16 @@ static int burnengine_computeContinuous() {
     /* AUTO-START: Continuous mode runs a power-switched install. On
      * power-up it must self-start a BOOST (no keypad press) and then run
      * the whole burn off exhaust temp, stopping only when the main unit
-     * cuts power. IDLE is only reachable here at boot — Continuous never
+     * cuts power. IDLE is only reachable here at boot - Continuous never
      * transitions to IDLE on its own, and burnengine_resetAlarms() forces
-     * SAFETY_OK before returning to IDLE — so a safety-latched shutdown
+     * SAFETY_OK before returning to IDLE - so a safety-latched shutdown
      * cannot auto-restart the fire.
      */
     if (sys.burnState == BURN_IDLE) {
         burnengine_startBoost();
     }
 
-    /* BOOST → RAMP */
+    /* BOOST -> RAMP */
     if (sys.burnState == BURN_BOOST) {
         unsigned long elapsed = now - sys.boostStartMs;
         if (!sys.boostActive ||
@@ -799,7 +800,7 @@ static int burnengine_computeContinuous() {
         }
     }
 
-    /* RAMP â†’ HOLD (early entry) */
+    /* RAMP -> HOLD (early entry) */
     if (sys.burnState == BURN_RAMP) {
         if (!sys.rampTimerActive) {
             sys.rampTimerActive = true;

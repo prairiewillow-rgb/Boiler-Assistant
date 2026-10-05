@@ -1,17 +1,17 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Main Firmware (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Main Firmware (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_3_Total_Domination.ino
+ *  File: BoilerAssistant_3_3_9_Total_Domination.ino
  *  Author: The Architect Collective
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.8 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.9 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
- *      - Deterministic, non-blocking main loop
+ *      - Timed/event-driven main loop with bounded sensor transactions
  *      - Unified keypad-driven UI with numeric selection everywhere
  *      - Fully transparent operator-facing logic and documentation
  *
@@ -23,8 +23,8 @@
  *      - Fan dimmer output (zero-cross PSM phase control, PWM fallback)
  *      - UI rendering (LCD) + keypad-driven operator interface
  *      - EEPROM-backed configuration and seasonal profiles
- *      - WiFi provisioning (STA-first, AP-fallback)
- *      - WiFi API + MQTT telemetry (async, non-blocking)
+ *      - WiFi provisioning (saved STA retries, AP without credentials)
+ *      - Incremental WiFi API + MQTT telemetry (synchronous modem I/O)
  *      - Push notifications (ntfy)
  *
  *  v3.3 Additions:
@@ -42,23 +42,49 @@
  *      - 2-second startup kick before returning to requested speed
  *      - Zero-cross phase control with automatic PWM fallback
  *
- *  v3.3.8 Additions:
- *      - Damper pre-fan delay reduced from 10 s to 5 s
- *      - Push notifications via ntfy (high temp, tank fault,
- *        exhaust fault, Ember Guardian, plus a dashboard test)
- *      - Automatic self-cleaning burn: burn-count interval,
- *        overnight window in local time, one-hour cap,
- *        AUTO TANK mode only, manual request from the dashboard
+ *  v3.3.9 Additions:
+ *      - PCF8574-compatible 100 kHz shared I2C bus
+ *      - Explicit bounded bus recovery on UNO R4 (timeout alone
+ *        does not reset the Renesas I2C peripheral)
+ *      - Checked LCD writes, status readback, reinitialization and
+ *        cache invalidation without leaving the operator's current menu
+ *      - Checked/rate-limited keypad scans and release-to-resume recovery
+ *      - Visible-only, serialized dashboard polling every 5 seconds;
+ *        settings/history refresh at most once a minute
+ *      - HTTP requests/responses processed in bounded chunks per loop
+ *      - MQTT 15-second keepalive (milliseconds API), short connection
+ *        timeout, and incremental Home Assistant discovery publishing
+ *      - Queued push delivery with incremental response reads and status
+ *      - /api/state exposes loop/network last and maximum duration in ms
+ *      - Saved WiFi credentials stay in STA mode during outages, with
+ *        30/60/120s retry backoff and 5s stable-link socket restart
+ *      - Runtime AT waits shortened to 3s; slow operations quarantine
+ *        networking, with quiet/reboot waits and staged socket cleanup
+ *      - Automatic bridge reset needs compatible ESP32-S3 firmware
+ *        (0.5.0+ baseline); an unacknowledged reset stays offline
+ *      - Network Info/telemetry use cached IP/RSSI; scheduled self-clean
+ *        uses cached UTC (valid for 24h), never WiFi calls in control
+ *      - BME280 calibration waits are asynchronous and deadline-checked
+ *      - BME identity/configuration/sample verification; only valid
+ *        measurements mark it healthy. Missing BME retries every 30s
+ *        without resetting the shared LCD/keypad bus.
+ *      - Fan phase timer runs only with valid Z-C and nonzero demand;
+ *        noisy Z-C IRQ is masked for 1s before retrying PWM fallback
+ *      - Runtime OneWire rescans have address/time budgets
+ *      - Rebuild from source: existing build artifacts predate these fixes
  *
  *  Architectural Notes:
- *      - Main loop is strictly deterministic and non-blocking
+ *      - I2C transactions are bounded; recovery retries are rate-limited
  *      - All subsystems operate on timed or event-driven cadence
- *      - WiFi + MQTT run asynchronously to avoid blocking control logic
+ *      - WiFiS3 modem calls/connect remain synchronous; requested transport
+ *        timeouts and chunking reduce stalls but do not guarantee latency
+ *      - A top-level modem operation may contain multiple 3s AT waits;
+ *        this is not hard real-time. Interactive OTA retains its own waits.
  *      - UI executes last to ensure stable system state before rendering
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -77,6 +103,7 @@
 #include "FanControl.h"
 #include "FanDimmer.h"
 #include "Keypad_I2C.h"
+#include "I2CBus.h"
 #include "Pinout.h"
 
 #include <WiFiS3.h>
@@ -86,7 +113,7 @@
 #include "PushNotify.h"
 
 /* ============================================================
- *  COMPATIBILITY SHIMS (v2.2 â†’ v3.3.6)
+ *  COMPATIBILITY SHIMS (v2.2 -> v3.3.6)
  * ============================================================ */
 #ifndef MAX_WATER_PROBES
 #define MAX_WATER_PROBES 8
@@ -150,12 +177,9 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.8 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.9 Boot ===");
 
-    Wire.begin();
-    Wire.setClock(400000);
-    // Recover and reset the bus instead of hanging forever if the LCD/keypad glitches.
-    Wire.setWireTimeout(25000, true);
+    i2cbus_init();
 
     // SystemData must be initialized before EEPROM populates it
     systemdata_init();
@@ -171,7 +195,7 @@ void setup() {
     keypad_init(Wire);
     ui_init();
 
-    // Provisioning: STA-first, AP-fallback
+    // Saved credentials retry offline; AP setup is for unprovisioned units.
     wifi_prov_init();
 
     if (!wifi_prov_isAPMode()) {
@@ -179,8 +203,7 @@ void setup() {
         mqtt_init();
     }
 
-    // Longer than WiFi.begin()'s internal 10s blocking retry so a normal
-    // reconnect attempt can't falsely trigger a watchdog reset.
+    // Retain the existing watchdog interval; modem commands remain synchronous.
     WDT.begin(16000);
 }
 
@@ -190,7 +213,10 @@ void setup() {
 
 void loop() {
 
+    unsigned long loopStartMs = millis();
     WDT.refresh();
+    i2cbus_loop();
+    sensors_loop();
     unsigned long now = millis();
 
     // 0) Keypad
@@ -224,7 +250,7 @@ void loop() {
         lastProbeScan = now;
     }
 
-    // 2) Burn engine â€“ exhaust pipeline
+    // 2) Burn engine - exhaust pipeline
     double rawExh = exhaust_readF_cached();
     sys.exhaustRawF = rawExh;                    // live raw flue temp for Guardian
     double smoothedExh = smoothExhaustF(rawExh);
@@ -245,15 +271,37 @@ void loop() {
     sys.uptimeMs = now;
 
     // 5) WiFi + MQTT (only when NOT in AP mode)
-    if (!wifi_prov_isAPMode()) {
+    unsigned long networkStartMs = millis();
+    unsigned long ioStartedMs = millis();
+    // Stop further clients in this pass after an overlong bridge operation.
+    // Recovery is serviced separately even while regular I/O is quarantined.
+    bool ioReady = wifi_prov_prepareIo();
+    wifi_prov_networkLoop();
+    if (ioReady) wifi_prov_finishIo(ioStartedMs, "link monitor");
+    if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
+        ioStartedMs = millis();
         wifiapi_loop();
-        mqtt_loop();
-        pushnotify_loop();
+        wifi_prov_finishIo(ioStartedMs, "HTTP");
     }
+    if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
+        ioStartedMs = millis();
+        mqtt_loop();
+        wifi_prov_finishIo(ioStartedMs, "MQTT");
+    }
+    if (!wifi_prov_isAPMode()) {
+        ioStartedMs = millis();
+        ioReady = wifi_prov_prepareIo();
+        pushnotify_loop();
+        if (ioReady) wifi_prov_finishIo(ioStartedMs, "push");
+    }
+    sys.networkLastMs = millis() - networkStartMs;
+    if (sys.networkLastMs > sys.networkMaxMs) sys.networkMaxMs = sys.networkLastMs;
 
     // 6) UI
     ui_showScreen(uiState, sys.exhaustSmoothF, fanPercent);
 
     // 7) Provisioning AP handler
     wifi_prov_loop();
+    sys.loopLastMs = millis() - loopStartMs;
+    if (sys.loopLastMs > sys.loopMaxMs) sys.loopMaxMs = sys.loopLastMs;
 }

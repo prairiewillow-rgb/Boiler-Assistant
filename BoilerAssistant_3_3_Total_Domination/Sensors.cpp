@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Sensor Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Sensor Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.cpp
  *  Author: The Architect Collective
@@ -11,14 +11,14 @@
  *    Unified sensor subsystem for the Boiler Assistant controller.
  *    Implements deterministic acquisition of:
  *
- *      â€¢ MAX31855 exhaust thermocouple
- *      â€¢ DS18B20 water probes (up to MAX_WATER_PROBES)
- *      â€¢ BME280 outdoor environmental sensor
+ *      - MAX31855 exhaust thermocouple
+ *      - DS18B20 water probes (up to MAX_WATER_PROBES)
+ *      - BME280 outdoor environmental sensor
  *
  *    All live values are written directly into SystemData (sys.*),
  *    following the Total Domination Architecture (TDA):
- *      - No dynamic allocation
- *      - No blocking delays beyond sensorâ€‘required Âµs waits
+ *      - BME280 bus interface is allocated once
+ *      - No blocking delays beyond sensor-required us waits
  *      - Deterministic smoothing and caching for exhaust readings
  *      - Probe roles resolved through sys.probeRoleMap
  *
@@ -26,10 +26,13 @@
  *      - Exhaust readings use a 250 ms cache to avoid MAX31855 spam
  *      - Water probes use 20% smoothing for stable tank readings
  *      - BME280 values are read only when envSensorOK is true
+ *      - BME280 calibration startup is asynchronous and deadline-checked
+ *      - Runtime OneWire rescans are budgeted; DallasTemperature's
+ *        library initialization still runs once at boot
  *      - This module contains no UI, MQTT, or EEPROM logic
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
@@ -38,6 +41,8 @@
 #include "SystemState.h"
 #include "EEPROMStorage.h"
 #include "Pinout.h"
+#include "I2CBus.h"
+#include "BoundedBME280.h"
 
 #include <Arduino.h>
 #include <OneWire.h>
@@ -59,7 +64,16 @@ static DeviceAddress tankProbeAddress;
 static bool tankProbeAddressValid = false;
 
 // BME280
-static Adafruit_BME280 bme;
+static BoundedBME280 bme;
+static unsigned long bmeLastAttemptMs = 0;
+static uint32_t bmeBusGeneration = 0;
+static const unsigned long BME_RETRY_MS = 30000UL;
+
+static void invalidateBME() {
+    sys.envSensorOK = false;
+    sys.envTempF = sys.envHumidity = sys.envPressure = NAN;
+    bme.cancel();
+}
 
 static Adafruit_MAX31855 max31855(
     PIN_MAX31855_SCK,
@@ -124,10 +138,28 @@ void scanWaterProbes() {
 
     DeviceAddress addr;
 
+    unsigned long scanStartMs = millis();
+    uint8_t scanAttempts = 0;
     while (oneWire.search(addr)) {
+        if (++scanAttempts > MAX_WATER_PROBES * 2 ||
+            millis() - scanStartMs >= 250UL) {
+            sys.waterProbeCount = oldCount;
+            oneWire.reset_search();
+            Serial.println("Water probes: scan budget exceeded; keeping previous addresses");
+            return;
+        }
+        if (OneWire::crc8(addr, 7) != addr[7]) {
+            Serial.println("Water probes: rejected address with bad CRC");
+            continue;
+        }
         if (foundCount < MAX_WATER_PROBES) {
             memcpy(found[foundCount], addr, 8);
             foundCount++;
+        }
+        if (millis() - scanStartMs >= 250UL) {
+            sys.waterProbeCount = oldCount;
+            Serial.println("Water probes: scan timed out; keeping previous addresses");
+            return;
         }
     }
 
@@ -199,15 +231,18 @@ void sensors_readWaterProbes() {
  * ============================================================ */
 
 void sensors_readBME280() {
-    static unsigned long lastRetryMs = 0;
-    static const unsigned long BME_RETRY_MS = 30000UL;
+    if (!i2cbus_ready()) {
+        if (sys.envSensorOK) Serial.println("BME280: I2C unavailable; outdoor readings invalidated");
+        invalidateBME();
+        return;
+    }
 
-    if (!sys.envSensorOK) {
-        unsigned long now = millis();
-        if (now - lastRetryMs < BME_RETRY_MS) return;
-        lastRetryMs = now;
-        sys.envSensorOK = bme.begin(0x76);
-        if (!sys.envSensorOK) return;
+    if (!bme.ready()) return;
+    if (!bme.measurementAvailable()) {
+        Serial.println("BME280: identity/configuration/sample check failed; readings cleared");
+        invalidateBME();
+        bmeLastAttemptMs = millis();
+        return;
     }
 
     float t = bme.readTemperature();
@@ -216,19 +251,47 @@ void sensors_readBME280() {
 
     // A dropped or noisy I2C link returns garbage (e.g. ~300F); reject anything outside the BME280's rated range.
     bool valid = !isnan(t) && t >= -40.0f && t <= 85.0f &&
-                 !isnan(p) && p >= 30000.0f && p <= 110000.0f;
+                 !isnan(p) && p >= 30000.0f && p <= 110000.0f &&
+                 !isnan(h) && h >= 0.0f && h <= 100.0f &&
+                 bme.measurementAvailable();
     if (!valid) {
-        sys.envSensorOK = false;
-        sys.envTempF    = NAN;
-        sys.envHumidity = NAN;
-        sys.envPressure = NAN;
-        lastRetryMs     = millis();
+        Serial.println("BME280: invalid measurement; scheduling reinitialization");
+        invalidateBME();
+        bmeLastAttemptMs = millis();
         return;
     }
 
     sys.envTempF    = t * 9.0f / 5.0f + 32.0f;
     sys.envPressure = p / 100.0f;
-    if (!isnan(h) && h >= 0.0f && h <= 100.0f) sys.envHumidity = h;
+    sys.envHumidity = h;
+    sys.envSensorOK = true;
+}
+
+void sensors_loop() {
+    if (!i2cbus_ready() || bmeBusGeneration != i2cbus_generation()) {
+        bmeBusGeneration = i2cbus_generation();
+        if (sys.envSensorOK || bme.pending()) {
+            Serial.println("BME280: shared bus reset; initialization cancelled");
+            invalidateBME();
+            bme.cancel();
+            bmeLastAttemptMs = millis();
+        }
+        if (!i2cbus_ready()) return;
+    }
+    if (bme.pending()) {
+        BoundedBME280::InitState state = bme.poll();
+        if (state == BoundedBME280::READY) {
+            Serial.println("BME280: startup verified; awaiting valid measurement");
+        } else if (state == BoundedBME280::FAILED) {
+            invalidateBME();
+            bmeLastAttemptMs = millis();
+        }
+        return;
+    }
+    if (!bme.ready() && !sys.envSensorOK && millis() - bmeLastAttemptMs >= BME_RETRY_MS) {
+        bmeLastAttemptMs = millis();
+        if (!bme.start()) invalidateBME();
+    }
 }
 
 /* ============================================================
@@ -237,8 +300,10 @@ void sensors_readBME280() {
 
 bool sensors_init() {
     // BME280
-    bool ok = bme.begin(0x76);
-    sys.envSensorOK = ok;
+    invalidateBME();
+    bmeBusGeneration = i2cbus_generation();
+    bmeLastAttemptMs = millis();
+    bool ok = i2cbus_ready() && bme.start();
 
     // DS18B20
     waterSensors.begin();
@@ -248,4 +313,3 @@ bool sensors_init() {
 
     return ok;
 }
-

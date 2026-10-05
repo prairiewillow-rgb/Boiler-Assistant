@@ -1,6 +1,6 @@
-﻿/*
+/*
  * ============================================================
- *  Boiler Assistant – Fan Control Module (v3.3.8 "Total Domination")
+ *  Boiler Assistant - Fan Control Module (v3.3.9 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -14,26 +14,26 @@
  *    IDLE, and SAFETY transitions.
  *
  *    Responsibilities:
- *      â€¢ Clamp Mode (fan always on within min/max limits)
- *      â€¢ Fan-off Mode with hysteresis and re-enable thresholds
- *      â€¢ BOOST and SAFETY overrides
- *      â€¢ State-transition smoothing between RAMP/HOLD
- *      â€¢ Damper pre-fan delay (5 s)
- *      â€¢ Gradual ramping toward the requested fan speed (no startup
+ *      - Clamp Mode (fan always on within min/max limits)
+ *      - Fan-off Mode with hysteresis and re-enable thresholds
+ *      - BOOST and SAFETY overrides
+ *      - State-transition smoothing between RAMP/HOLD
+ *      - Damper pre-fan delay (5 s)
+ *      - Gradual ramping toward the requested fan speed (no startup
  *        kick: most boilers hold flue temp on natural draft through
  *        the deadband, so a full-power kick only causes overshoot
  *        and rapid on/off hunting)
- *      â€¢ Exhaust-probe fallback at max clamp fan output
- *      â€¢ Full SystemData migration (no legacy globals)
+ *      - Exhaust-probe fallback at max clamp fan output
+ *      - Full SystemData migration (no legacy globals)
  *
  *  Architectural Notes:
  *      - FanControl owns all fan smoothing and hysteresis logic.
  *      - SystemData (sys.*) is the single source of truth.
  *      - This module never touches UI, EEPROM, or WiFi logic.
- *      - Output is always deterministic and operatorâ€‘visible.
+ *      - Output is always deterministic and operator-visible.
  *
  *  Version:
- *      Boiler Assistant v3.3.8 "Total Domination"
+ *      Boiler Assistant v3.3.9 "Total Domination"
  * ============================================================
  */
 
