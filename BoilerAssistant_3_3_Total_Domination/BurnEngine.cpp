@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Burn Engine Module (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Burn Engine Module (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -26,7 +26,7 @@
  *      - Deterministic fan clamping and demand shaping
  *      - Expanded documentation for open-source contributors
  *
- *  v3.3.9 Additions:
+ *  v3.3.9 Additions (retained):
  *      - Automatic self-cleaning burn: after a configurable number of
  *        completed burns, one full-output burn runs inside the
  *        configured overnight window (local time zone + DST), capped
@@ -40,7 +40,7 @@
  *      - All timing uses millis() and remains strictly non-blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Guarded WiFi Transport (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Guarded WiFi Transport (v3.3.10 "Total Domination")
  *  File: RuntimeWiFiClient.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -12,7 +12,7 @@
  *    sending close commands into an unresponsive bridge.
  *    Underlying WiFiS3 operations remain synchronous.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

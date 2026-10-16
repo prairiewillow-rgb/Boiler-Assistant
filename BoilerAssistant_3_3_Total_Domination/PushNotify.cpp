@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Push Delivery (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Push Delivery (v3.3.10 "Total Domination")
  *  File: PushNotify.cpp
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -13,7 +13,7 @@
  *    Interrupted delivery has an unknown outcome and is not
  *    blindly retried.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Bounded BME280 Driver (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Bounded BME280 Driver (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BoundedBME280.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -14,7 +14,7 @@
  *    Owns one allocated I2C interface through the base driver.
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

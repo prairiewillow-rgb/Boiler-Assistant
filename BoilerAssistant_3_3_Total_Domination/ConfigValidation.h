@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Configuration Validation (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Configuration Validation (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: ConfigValidation.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -12,7 +12,7 @@
  *    validate individual values without modifying configuration.
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

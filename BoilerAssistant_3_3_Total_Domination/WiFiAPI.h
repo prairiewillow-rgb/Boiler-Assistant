@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi JSON API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - WiFi JSON API (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.h
  *  Author: The Architect Collective
@@ -29,7 +29,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

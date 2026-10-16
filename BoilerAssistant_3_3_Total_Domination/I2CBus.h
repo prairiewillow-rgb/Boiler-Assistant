@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Shared I2C API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Shared I2C API (v3.3.10 "Total Domination")
  *  File: I2CBus.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -11,7 +11,7 @@
  *    servicing advances rate-limited bus recovery before devices.
  *    Permanently held lines require hardware investigation.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

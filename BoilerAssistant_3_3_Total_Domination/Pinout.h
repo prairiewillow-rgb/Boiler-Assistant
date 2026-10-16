@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Hardware Pinout 
+ *  Boiler Assistant - Hardware Pinout (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Pinout.h
  *  Author: The Architect Collective
@@ -32,9 +32,10 @@
  *        - Shared bus runs at 100 kHz (PCF8574 limit), with bounded
  *          GPIO clock/STOP recovery. A permanently stuck bus cannot
  *          be repaired in software; inspect wiring/power/pull-ups.
- *        - LCD uses hd44780/hd44780_I2Cexp for checked transfers and
- *          controller-status readback, with the original 0x27 mapping.
- *        - Keypad 0x20 and LCD retry failed transfers after 5 seconds;
+ *        - LCD uses LiquidCrystal_PCF8574 with the original 0x27 mapping
+ *          and v3.3.8 row writes. Backpack ACK checks do not verify
+ *          individual LCD commands or controller cursor state.
+ *        - Keypad 0x20 and LCD retry detected failures after 5 seconds;
  *          keypad recovery requires a stable release before input resumes.
  *        - DS18B20 sensors share a single OneWire bus on D8.
  *        - MAX31855 thermocouples use hardware SPI (D12/D13).
@@ -45,7 +46,7 @@
  *          noisy/missing Z-C falls back to PWM, not controller reset.
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

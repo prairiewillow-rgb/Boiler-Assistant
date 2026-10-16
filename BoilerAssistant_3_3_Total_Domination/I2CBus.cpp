@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Shared I2C Recovery (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Shared I2C Recovery (v3.3.10 "Total Domination")
  *  File: I2CBus.cpp
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -12,7 +12,7 @@
  *    Held-line checks and retries use one-second intervals;
  *    a generation counter informs device drivers of recovery.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

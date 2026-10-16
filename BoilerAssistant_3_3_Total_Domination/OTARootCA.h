@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - OTA Trust Anchor (v3.3.9 "Total Domination")
+ *  Boiler Assistant - OTA Trust Anchor (v3.3.10 "Total Domination")
  *  File: OTARootCA.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -10,7 +10,7 @@
  *    WiFi bridge for OTA HTTPS server authentication.
  *    Contains no private key or user credential.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

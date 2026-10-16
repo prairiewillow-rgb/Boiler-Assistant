@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Master Hardware Parts List (v3.3.9)
+ *  Boiler Assistant - Master Hardware Parts List (v3.3.10)
  *  ------------------------------------------------------------
  *  File: HardwareManifest.h (reference documentation)
  *  Author: The Architect Collective

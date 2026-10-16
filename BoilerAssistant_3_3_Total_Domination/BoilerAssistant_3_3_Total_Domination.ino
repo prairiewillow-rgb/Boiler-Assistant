@@ -1,15 +1,15 @@
 /*
  * ============================================================
- *  Boiler Assistant - Main Firmware (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Main Firmware (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_3_9_Total_Domination.ino
+ *  File: BoilerAssistant_3_3_10_Total_Domination.ino
  *  Author: The Architect Collective
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.9 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.10 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Timed/event-driven main loop with bounded sensor transactions
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -42,12 +42,19 @@
  *      - 2-second startup kick before returning to requested speed
  *      - Zero-cross phase control with automatic PWM fallback
  *
- *  v3.3.9 Additions:
+ *  v3.3.10 Release:
+ *      - Release identity and source headers updated to 3.3.10
+ *      - Retains the LiquidCrystal_PCF8574 rollback from updated 3.3.9
+ *      - Fan modes, burn logic, pin mappings and EEPROM layout unchanged
+ *      - Compiled firmware still requires validation on installed hardware
+ *
+ *  v3.3.9 Additions (retained):
  *      - PCF8574-compatible 100 kHz shared I2C bus
  *      - Explicit bounded bus recovery on UNO R4 (timeout alone
  *        does not reset the Renesas I2C peripheral)
- *      - Checked LCD writes, status readback, reinitialization and
- *        cache invalidation without leaving the operator's current menu
+ *      - LCD rollback to LiquidCrystal_PCF8574 and v3.3.8 row writes;
+ *        backpack connection checks, reinitialization and cache invalidation
+ *        preserve the current menu. Individual LCD writes are not verified.
  *      - Checked/rate-limited keypad scans and release-to-resume recovery
  *      - Visible-only, serialized dashboard polling every 5 seconds;
  *        settings/history refresh at most once a minute
@@ -71,7 +78,7 @@
  *      - Fan phase timer runs only with valid Z-C and nonzero demand;
  *        noisy Z-C IRQ is masked for 1s before retrying PWM fallback
  *      - Runtime OneWire rescans have address/time budgets
- *      - Rebuild from source: existing build artifacts predate these fixes
+ *      - Rebuild from source; do not reuse older release binaries
  *
  *  Architectural Notes:
  *      - I2C transactions are bounded; recovery retries are rate-limited
@@ -84,7 +91,7 @@
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 
@@ -177,7 +184,7 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.9 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.10 Boot ===");
 
     i2cbus_init();
 

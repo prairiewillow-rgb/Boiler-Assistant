@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - UI API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - UI API (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.h
  *  Author: The Architect Collective
@@ -19,11 +19,11 @@
  *      - All UI state definitions live in SystemState.h
  *      - No sensor, burn engine, or MQTT logic belongs here
  *      - Rendering is strictly operator-facing and deterministic
- *      - Checked LCD writes and recoverable current-screen repaint
+ *      - PCF8574 connection checks and recoverable current-screen repaint
  *      - Cached network information; invalid BME shows a sensor error
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

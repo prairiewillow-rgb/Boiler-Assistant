@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - UI Module (v3.3.9 "Total Domination")
+ *  Boiler Assistant - UI Module (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -22,14 +22,15 @@
  *      - No control logic lives here - UI only.
  *      - All state is read/written through SystemData (sys.*).
  *      - All EEPROM writes are delegated to EEPROMStorage.
- *      - Checked LCD transfers invalidate the render cache on failure;
- *        recovery repaints the current screen without changing menus.
+ *      - LiquidCrystal_PCF8574 restores the v3.3.8 row-write sequence.
+ *      - Backpack connection checks and bus recovery invalidate the
+ *        render cache; individual LCD commands cannot be verified.
  *      - Network Info uses cached IP/RSSI, not live modem queries.
  *      - Rendering is strictly 20x4 LCD, deterministic, no animations
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 
@@ -45,8 +46,7 @@
 #include "I2CBus.h"
 #include <Arduino.h>
 #include <Wire.h>
-#include <hd44780.h>
-#include <hd44780ioClass/hd44780_I2Cexp.h>
+#include <LiquidCrystal_PCF8574.h>
 #include <Arduino.h>
 #include <WiFiS3.h>
 #include <EEPROM.h>
@@ -185,7 +185,7 @@ static uint8_t selectedPhys = 0;
 /* ============================================================
  *  LCD RENDERER
  * ============================================================ */
-static hd44780_I2Cexp* lcdRef = nullptr;
+static LiquidCrystal_PCF8574* lcdRef = nullptr;
 static char lcdLast[4][21] = {};
 static bool lcdLineValid[4] = {};
 static bool lcdOnline = false;
@@ -193,20 +193,23 @@ static bool lcdAttempted = false;
 static unsigned long lcdLastAttemptMs = 0;
 static unsigned long lcdLastHealthMs = 0;
 static uint32_t lcdBusGeneration = 0;
-static uint8_t lcdExpectedAddress = 0;
-static bool lcdAddressValid = false;
+static const uint8_t LCD_I2C_ADDRESS = 0x27;
 
 static void lcdInvalidate() {
     for (uint8_t i = 0; i < 4; ++i) lcdLineValid[i] = false;
-    lcdAddressValid = false;
 }
 
 static void lcdFailed() {
-    Serial.println("LCD: transfer/status failed; scheduling reinitialization");
+    Serial.println("LCD: backpack not responding; scheduling reinitialization");
     lcdOnline = false;
     lcdLastAttemptMs = millis();
     lcdInvalidate();
     i2cbus_requestRecovery();
+}
+
+static bool lcdConnected() {
+    Wire.beginTransmission(LCD_I2C_ADDRESS);
+    return Wire.endTransmission() == 0;
 }
 
 static bool lcdEnsureReady() {
@@ -218,9 +221,16 @@ static bool lcdEnsureReady() {
         lcdAttempted = true;
         lcdLastAttemptMs = now;
         lcdInvalidate();
-        // Keep the original backpack mapping, but use a driver that reports
-        // failed commands/writes rather than claiming every print succeeded.
-        if (lcdRef->begin(20, 4) != 0 || lcdRef->setBacklight(255) != 0) {
+        if (!lcdConnected()) {
+            lcdFailed();
+            return false;
+        }
+        lcdRef->begin(20, 4);
+        // begin() calls Wire.begin(); restore the shared-bus configuration.
+        Wire.setClock(100000);
+        Wire.setWireTimeout(25000, false);
+        lcdRef->setBacklight(255);
+        if (!lcdConnected()) {
             lcdFailed();
             return false;
         }
@@ -230,12 +240,10 @@ static bool lcdEnsureReady() {
         Serial.println("LCD: initialized; repainting current screen");
     }
 
-    if (now - lcdLastHealthMs >= 1000UL && lcdAddressValid) {
+    if (now - lcdLastHealthMs >= 1000UL) {
         lcdLastHealthMs = now;
-        // ACK alone cannot detect a powered/reset or nibble-desynchronized LCD.
-        int status = lcdRef->status();
-        if (status < 0 || (status & 0x80) != 0 ||
-            (status & 0x7F) != lcdExpectedAddress) {
+        // ACK checks the backpack, not LCD cursor state or individual writes.
+        if (!lcdConnected()) {
             lcdFailed();
             return false;
         }
@@ -246,9 +254,6 @@ static bool lcdEnsureReady() {
 static void lcd4(const char* l1, const char* l2, const char* l3, const char* l4) {
     if (!lcdEnsureReady()) return;
     const char* lines[4] = { l1, l2, l3, l4 };
-    // HD44780 DDRAM jumps 0x27 -> 0x40 and 0x67 -> 0x00.
-    static const uint8_t endAddresses[4] = {0x14, 0x54, 0x40, 0x00};
-
     for (int i = 0; i < 4; i++) {
         char padded[21];
         memset(padded, ' ', 20);
@@ -257,14 +262,16 @@ static void lcd4(const char* l1, const char* l2, const char* l3, const char* l4)
         while (length < 20 && lines[i][length] != '\0') ++length;
         memcpy(padded, lines[i], length);
         if (!lcdLineValid[i] || memcmp(padded, lcdLast[i], 20) != 0) {
-            if (lcdRef->setCursor(0, i) != 0 || lcdRef->print(padded) != 20) {
+            lcdRef->setCursor(0, i);
+            lcdRef->print("                    ");
+            lcdRef->setCursor(0, i);
+            lcdRef->print(padded);
+            if (!lcdConnected()) {
                 lcdFailed();
                 return;
             }
             memcpy(lcdLast[i], padded, sizeof(padded));
             lcdLineValid[i] = true;
-            lcdExpectedAddress = endAddresses[i];
-            lcdAddressValid = true;
         }
     }
 }
@@ -369,8 +376,7 @@ static void showBootScreen() {
  *  UI INIT
  * ============================================================ */
 void ui_init() {
-    static hd44780_I2Cexp lcd(0x27, I2Cexp_PCF8574,
-                             0, 1, 2, 4, 5, 6, 7, 3, HIGH);
+    static LiquidCrystal_PCF8574 lcd(LCD_I2C_ADDRESS);
     lcdRef = &lcd;
 
     if (lcdEnsureReady()) showBootScreen();

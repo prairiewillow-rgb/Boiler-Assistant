@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi Provisioning Module (v3.3.9 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning Module (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -35,7 +35,7 @@
  *      - UI/telemetry use cached network data; control uses cached UTC
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

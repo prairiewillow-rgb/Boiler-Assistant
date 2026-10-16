@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Keypad I2C API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Keypad I2C API (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -25,7 +25,7 @@
  *      - Key events resume only after recovery and stable release
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

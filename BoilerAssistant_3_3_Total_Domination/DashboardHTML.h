@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Web Dashboard (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Web Dashboard (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: DashboardHTML.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -14,7 +14,7 @@
  *    pauses in hidden tabs; settings/history cache lasts 60s.
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

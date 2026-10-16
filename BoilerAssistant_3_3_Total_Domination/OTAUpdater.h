@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - OTA Updater API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - OTA Updater API (v3.3.10 "Total Domination")
  *  File: OTAUpdater.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -12,7 +12,7 @@
  *    Requires bridge firmware 0.5.0 or newer. Success reboots;
  *    failures return to the operator interface.
  *
- *  Version: Boiler Assistant v3.3.9 "Total Domination"
+ *  Version: Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

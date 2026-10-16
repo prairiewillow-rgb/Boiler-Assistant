@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - MQTT Client API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - MQTT Client API (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.h
  *  Author: The Architect Collective
@@ -28,7 +28,7 @@
  *      - No burn logic, UI logic, or EEPROM logic belongs here
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

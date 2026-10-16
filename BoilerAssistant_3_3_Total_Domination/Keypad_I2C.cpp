@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Keypad I2C Driver (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Keypad I2C Driver (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Keypad_I2C.cpp
  *  Author: The Architect Collective
@@ -27,7 +27,7 @@
  *        transactions are synchronous with the shared-bus timeout
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

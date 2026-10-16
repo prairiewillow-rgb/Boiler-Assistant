@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi Provisioning API (v3.3.9 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning API (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.h
  *  Author: The Architect Collective
@@ -34,7 +34,7 @@
  *      - SystemData is the single source of truth for WiFi status
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 

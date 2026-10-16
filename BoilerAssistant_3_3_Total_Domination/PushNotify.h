@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Push Notifications (v3.3.9 "Total Domination")
+ *  Boiler Assistant - Push Notifications (v3.3.10 "Total Domination")
  *  ------------------------------------------------------------
  *  File: PushNotify.h
  *  License: CC BY-NC-SA 4.0
@@ -22,7 +22,7 @@
  *  not retried blindly (the service may already have accepted it).
  *
  *  Version:
- *      Boiler Assistant v3.3.9 "Total Domination"
+ *      Boiler Assistant v3.3.10 "Total Domination"
  * ============================================================
  */
 
