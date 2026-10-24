@@ -1,15 +1,15 @@
 /*
  * ============================================================
- *  Boiler Assistant - Main Firmware (v3.3.10 "Total Domination")
+ *  Boiler Assistant - Main Firmware (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_3_10_Total_Domination.ino
+ *  File: BoilerAssistant_3_3_11_Total_Domination.ino
  *  Author: The Architect Collective
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.10 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.11 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Timed/event-driven main loop with bounded sensor transactions
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -42,8 +42,8 @@
  *      - 2-second startup kick before returning to requested speed
  *      - Zero-cross phase control with automatic PWM fallback
  *
- *  v3.3.10 Release:
- *      - Release identity and source headers updated to 3.3.10
+ *  v3.3.11 Release:
+ *      - Release identity and source headers updated to 3.3.11
  *      - Retains the LiquidCrystal_PCF8574 rollback from updated 3.3.9
  *      - Fan modes, burn logic, pin mappings and EEPROM layout unchanged
  *      - Compiled firmware still requires validation on installed hardware
@@ -91,7 +91,7 @@
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -184,7 +184,7 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.10 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.11 Boot ===");
 
     i2cbus_init();
 
@@ -269,7 +269,7 @@ void loop() {
     // 3) Fan control (single source of truth)
     int fanPercent = fancontrol_apply(demand);
 
-    fan_dimmer_setPercent(fanPercent);
+    fanPercent = fan_dimmer_setPercent(fanPercent);
 
     // 4) Update SystemData snapshot for UI / WiFi / MQTT
 

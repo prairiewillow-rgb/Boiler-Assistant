@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Hardware Pinout (v3.3.10 "Total Domination")
+ *  Boiler Assistant - Hardware Pinout (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Pinout.h
  *  Author: The Architect Collective
@@ -40,13 +40,14 @@
  *        - DS18B20 sensors share a single OneWire bus on D8.
  *        - MAX31855 thermocouples use hardware SPI (D12/D13).
  *        - Fan output on D5: zero-cross synchronized PSM phase control
- *          when a valid Z-C signal is present on D0, legacy PWM otherwise.
+ *          when a valid Z-C signal is present on D0. Auto Tank permits PWM
+ *          fallback; all Continuous installations require stable Z-C.
  *        - Phase timer runs only with validated Z-C and nonzero demand.
  *          More than 32 rising edges in 10ms masks D0's IRQ for 1s;
- *          noisy/missing Z-C falls back to PWM, not controller reset.
+ *          noisy/missing Z-C stops Continuous output, not controller reset.
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -64,7 +65,7 @@
  *  DIGITAL OUTPUTS
  * ============================================================ */
 
-// Fan dimmer PSM output (phase pulses when Z-C is detected, otherwise PWM)
+// Fan dimmer PSM output (Auto Tank only permits PWM fallback).
 #define PIN_FAN_PWM        D5
 
 // Dimmer zero-cross input; D0 supports external interrupts on UNO R4.

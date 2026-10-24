@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - UI Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - UI Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -44,6 +44,7 @@
 #include "OTAUpdater.h"
 #include "Version.h"
 #include "I2CBus.h"
+#include "FanDimmer.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <LiquidCrystal_PCF8574.h>
@@ -316,7 +317,8 @@ static void ui_showExhaustFallback()
     lcd4(
         "EXHAUST PROBE FAULT ",
         "CLEAN OR REPLACE    ",
-        "FAN AT MAX CLAMP    ",
+        sys.controlMode == RUNMODE_CONTINUOUS && !fan_dimmer_boilerCallReady() ?
+            "NO ZC - FAN OFF     " : "FAN AT MAX CLAMP    ",
         "PRESS * TO RESET    "
     );
 }
@@ -391,7 +393,7 @@ void ui_init() {
 static void ui_showHome(double exhaustF_unused, int fanPercent) {
     char l1[21], l2[21], l3[21], l4[21];
 
-    if (sys.emberGuardianLatched && sys.burnState == BURN_EMBER_GUARD) {
+    if (sys.emberGuardianLatched) {
         lcd4(
             "   EMBER GUARDIAN   ",
             "   DAMPER/FAN OFF   ",
@@ -434,7 +436,9 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
         snprintf(l3, 21, "FAN:%3d%%    W/C:%03dF", fanPercent, tankF);
 
     switch (sys.burnState) {
-        case BURN_IDLE:        snprintf(l4, 21, "IDLE          "); break;
+        case BURN_IDLE:        snprintf(l4, 21, sys.controlMode == RUNMODE_CONTINUOUS &&
+                                        !fan_dimmer_boilerCallReady() ?
+                                        "WAIT BOILER / NO ZC" : "IDLE          "); break;
         case BURN_RAMP:        snprintf(l4, 21, "RAMPING UP    "); break;
         case BURN_HOLD:        snprintf(l4, 21, "IN THE ZONE!! "); break;
         case BURN_BOOST:       snprintf(l4, 21, "BOOSTING      "); break;
@@ -705,7 +709,7 @@ static void ui_showRunModeConfirmContinuous() {
     lcd4(
         "!!CONTINUOUS  MODE!!",
         "!IGNORES  TANK TEMP!",
-        "!!NO AUTO SHUTDOWN!!",
+        "REQUIRES BOILER ZC ",
         "   A:YES    B:NO    "
     );
 }
@@ -1495,7 +1499,6 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
                 case 'A':
                     sys.controlMode = RUNMODE_CONTINUOUS;
                     eeprom_saveRunMode(RUNMODE_CONTINUOUS);
-                    burnengine_startBoost();
                     uiState = UI_RUNMODE;
                     uiNeedRedraw = true;
                     break;

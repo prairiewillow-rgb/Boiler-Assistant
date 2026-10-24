@@ -28,12 +28,32 @@ jobs:
           arduino-cli lib install "OneWire" "DallasTemperature" "Adafruit BME280 Library" \
             "Adafruit MAX31855 library" "LiquidCrystal_PCF8574" "ArduinoMqttClient" "ArduinoJson@7.4.3"
 
-      - name: Compile
-        run: arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --output-dir build "$SKETCH"
-
       - name: Read firmware version
         id: ver
         run: echo "version=$(grep -oP '#define FW_VERSION "\K[^"]+' "$SKETCH/Version.h")" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare firmware binary
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+          PREBUILT_RELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[prebuilt]') }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          prebuilt="firmware-releases/BoilerAssistant_${RELEASE_VERSION}.bin"
+          if [[ "$PREBUILT_RELEASE" == "true" ]]; then
+            if [[ ! -f "$prebuilt" ]]; then
+              echo "Requested prebuilt release binary is missing: $prebuilt" >&2
+              exit 1
+            fi
+            if ! grep -a -F -q "$RELEASE_VERSION" "$prebuilt"; then
+              echo "Prebuilt binary does not contain release version $RELEASE_VERSION" >&2
+              exit 1
+            fi
+            echo "Using supplied release binary $prebuilt; skipping firmware compilation."
+            cp "$prebuilt" "build/$SKETCH.ino.bin"
+          else
+            arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --output-dir build "$SKETCH"
+          fi
 
       - name: Convert .bin to .ota
         run: |
@@ -56,5 +76,6 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add -A firmware-releases fw.ota
-          git commit -m "Firmware ${{ steps.ver.outputs.version }}" || echo "No changes"
+          git commit -m "Firmware ${{ steps.ver.outputs.version }}" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>" || echo "No changes"
           git push

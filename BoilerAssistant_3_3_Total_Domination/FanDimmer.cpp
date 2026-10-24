@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Fan Dimmer Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - Fan Dimmer Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.cpp
  *  Author: The Architect Collective
@@ -11,38 +11,38 @@
  *    Fan output driver for the PWM/dimmer hardware. When a valid
  *    zero-cross signal is present on D0, the fan output on D5 uses
  *    zero-cross-synchronized PSM phase control. Without a valid
- *    zero-cross signal, output automatically falls back to legacy
- *    PWM so existing installations keep working unchanged.
+ *    zero-cross signal, Auto Tank falls back to legacy PWM.
+ *    Continuous requires qualified, stable Z-C and otherwise commands zero.
  *
  *    Responsibilities:
  *      - Zero-cross detection with half-cycle validation
  *      - Phase-fired PSM pulses timed from each zero-cross
- *      - Automatic fallback to analogWrite PWM when Z-C is absent
+ *      - Auto Tank PWM fallback; Continuous Z-C call qualification
  *      - Non-blocking, timer/interrupt-driven output
  *
  *  Architectural Notes:
  *      - This module owns the physical fan output pin only.
  *      - Phase timer starts only with validated Z-C and nonzero demand.
  *      - Excessive Z-C edges mask the input IRQ for one second;
- *        main-loop servicing applies the existing PWM fallback.
+ *        Auto Tank retains PWM fallback; Continuous fails closed.
  *      - Fan demand decisions live in FanControl; state logic in
  *        BurnEngine; both call fan_dimmer_setPercent().
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
 #include "FanDimmer.h"
 #include "Pinout.h"
+#include "SystemData.h"
 #include <FspTimer.h>
 #include <FspLinkIrq.h>
 
 static const float PHASE_TIMER_HZ = 20000.0f;
-// 100us gate pulse: on an inductive motor load the triac needs enough
-// time at sufficient instantaneous voltage to reach latching current
-// before the gate pulse ends, or it snaps back off and the fan just hums.
-static const uint32_t PSM_PULSE_WIDTH_US = 100UL;
+// Hold the gate through the half-cycle so inductive fan loads have time
+// to latch; the next zero-cross handler turns the output off.
+static const uint32_t PSM_PULSE_WIDTH_US = 10000UL;
 // Never fire earlier than 1ms after zero-cross (~65V instantaneous on
 // 120V mains). Firing closer to the cross cannot latch the triac.
 static const uint32_t MIN_FIRE_DELAY_US = 1000UL;
@@ -70,6 +70,10 @@ static volatile uint32_t zeroCrossAtUs = 0;
 static volatile uint32_t previousZeroCrossAtUs = 0;
 static volatile uint32_t measuredHalfCycleUs = 8333UL;
 static volatile uint8_t validZeroCrossIntervals = 0;
+static volatile uint32_t qualifiedSinceUs = 0;
+static volatile bool zeroCrossStable = false;
+static volatile bool requireZeroCross = false;
+static volatile bool callInterrupted = false;
 static int zeroCrossIrqIndex = -1;
 static volatile bool zeroCrossSuppressed = false;
 static volatile uint32_t zeroCrossSuppressedAtUs = 0;
@@ -90,7 +94,10 @@ static void fan_zeroCrossIsr() {
         edgeWindowCount = 0;
     }
     if (++edgeWindowCount > 32) {
+        if (qualifiedSinceUs != 0) callInterrupted = true;
         validZeroCrossIntervals = 0;
+        qualifiedSinceUs = 0;
+        zeroCrossStable = false;
         zeroCrossSuppressed = true;
         zeroCrossSuppressedAtUs = nowUs;
         // Mask the already-resolved IRQ: no heap allocation or Serial in ISR.
@@ -107,10 +114,18 @@ static void fan_zeroCrossIsr() {
             measuredHalfCycleUs = intervalUs;
             // Consecutive in-band intervals build confidence in a real signal.
             if (validZeroCrossIntervals < ZC_REQUIRED_CONSECUTIVE) validZeroCrossIntervals++;
+            if (validZeroCrossIntervals == ZC_REQUIRED_CONSECUTIVE && qualifiedSinceUs == 0)
+                qualifiedSinceUs = nowUs;
+            if (!zeroCrossStable && qualifiedSinceUs != 0 &&
+                nowUs - qualifiedSinceUs >= 500000UL)
+                zeroCrossStable = true;
         } else {
             // Any out-of-band interval resets confidence to zero: noise on a
             // floating pin can no longer accumulate scattered valid windows.
+            if (qualifiedSinceUs != 0) callInterrupted = true;
             validZeroCrossIntervals = 0;
+            qualifiedSinceUs = 0;
+            zeroCrossStable = false;
         }
     }
 
@@ -124,10 +139,19 @@ static void fan_phaseTimerCallback(timer_callback_args_t*) {
 
     uint32_t latestCrossUs = zeroCrossAtUs;
     uint32_t nowUs = micros();
-    if (latestCrossUs == 0 || nowUs - latestCrossUs > ZC_TIMEOUT_US) {
+    bool lost = latestCrossUs == 0 || nowUs - latestCrossUs > ZC_TIMEOUT_US;
+    bool blocked = requireZeroCross && (lost || zeroCrossSuppressed ||
+                   validZeroCrossIntervals < ZC_REQUIRED_CONSECUTIVE ||
+                   !zeroCrossStable);
+    if (lost || blocked) {
+        if (requireZeroCross && lost) {
+            callInterrupted = true;
+            zeroCrossStable = false;
+            qualifiedSinceUs = 0;
+        }
         firePending = false;
         psmPulseHigh = false;
-        digitalWrite(PIN_FAN_PWM, requestedPercent > 0 ? HIGH : LOW);
+        digitalWrite(PIN_FAN_PWM, !requireZeroCross && requestedPercent > 0 ? HIGH : LOW);
         return;
     }
 
@@ -193,7 +217,7 @@ bool fan_dimmer_init() {
         !phaseTimer.setup_overflow_irq() ||
         !phaseTimer.open()) {
         phaseTimer.end();
-        Serial.println("Fan: phase timer unavailable; using PWM fallback");
+        Serial.println("Fan: timer unavailable; Continuous waits, Auto PWM");
         return false;
     }
 
@@ -211,24 +235,27 @@ bool fan_dimmer_init() {
         detachInterrupt(digitalPinToInterrupt(PIN_FAN_ZERO_CROSS));
         phaseTimer.end();
         phaseTimerReady = false;
-        Serial.println("Fan: zero-cross IRQ unavailable; using PWM fallback");
+        Serial.println("Fan: ZC IRQ unavailable; Continuous waits, Auto PWM");
         return false;
     }
     return true;
 }
 
-void fan_dimmer_setPercent(int percent) {
+int fan_dimmer_setPercent(int percent) {
+    requireZeroCross = sys.controlMode == RUNMODE_CONTINUOUS;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     if (zeroCrossSuppressed) {
         if (!noiseLogged) {
             noiseLogged = true;
-            Serial.println("Fan: zero-cross interrupt noise; PWM fallback, retry in 1s");
+            Serial.println("Fan: noisy zero-cross; Continuous waits, Auto PWM; retry in 1s");
         }
         if (micros() - zeroCrossSuppressedAtUs >= 1000000UL) {
             noInterrupts();
             previousZeroCrossAtUs = zeroCrossAtUs = 0;
             validZeroCrossIntervals = 0;
+            qualifiedSinceUs = 0;
+            zeroCrossStable = false;
             edgeWindowCount = 0;
             edgeWindowUs = micros();
             zeroCrossSuppressed = false;
@@ -240,6 +267,7 @@ void fan_dimmer_setPercent(int percent) {
         }
     }
 
+    if (requireZeroCross && !fan_dimmer_boilerCallReady()) percent = 0;
     uint32_t lastCrossUs;
     uint32_t lastHalfCycleUs;
     uint8_t validIntervals;
@@ -258,10 +286,9 @@ void fan_dimmer_setPercent(int percent) {
                      lastHalfCycleUs <= ZC_MAX_HALF_CYCLE_US &&
                      lastCrossUs != 0 &&
                      nowUs - lastCrossUs <= ZC_TIMEOUT_US;
+    if (requireZeroCross && !zcIsValid) percent = 0;
 
-    // If the signal degrades while in phase mode (wire unplugged, or it was
-    // never a real Z-C source), drop back to plain PWM instead of staying in
-    // the starved 20kHz phase state.
+    // Auto Tank retains PWM fallback; Continuous has already gated demand to zero.
     if (outputUsesPhaseControl && !zcIsValid) {
         phaseTimer.stop();
         noInterrupts();
@@ -270,7 +297,7 @@ void fan_dimmer_setPercent(int percent) {
         outputUsesPhaseControl = false;
         pinMode(PIN_FAN_PWM, OUTPUT);
         analogWrite(PIN_FAN_PWM, (long)percent * 255L / 100L);
-        return;
+        return percent;
     }
 
     if (zcIsValid) {
@@ -286,7 +313,8 @@ void fan_dimmer_setPercent(int percent) {
                 phaseControlEnabled = false;
                 outputUsesPhaseControl = false;
                 phaseTimerReady = false;
-                Serial.println("Fan: phase timer start failed; using PWM fallback");
+                Serial.println("Fan: timer start failed; Continuous waits, Auto PWM");
+                if (requireZeroCross) percent = 0;
             }
         }
     }
@@ -295,12 +323,48 @@ void fan_dimmer_setPercent(int percent) {
         noInterrupts();
         requestedPercent = (uint8_t)percent;
         interrupts();
-        return;
+        return percent;
     }
 
     analogWrite(PIN_FAN_PWM, (long)percent * 255L / 100L);
+    return percent;
 }
 
 bool fan_dimmer_phaseModeActive() {
     return outputUsesPhaseControl;
+}
+
+bool fan_dimmer_boilerCallReady() {
+    noInterrupts();
+    uint32_t now = micros();
+    if (zeroCrossAtUs == 0 || now - zeroCrossAtUs > ZC_TIMEOUT_US) {
+        if (zeroCrossStable) callInterrupted = true;
+        zeroCrossStable = false;
+        qualifiedSinceUs = 0;
+    }
+    bool ready = phaseTimerReady && !zeroCrossSuppressed && zeroCrossStable &&
+                 validZeroCrossIntervals >= ZC_REQUIRED_CONSECUTIVE;
+    interrupts();
+    return ready;
+}
+
+bool fan_dimmer_takeCallInterrupted() {
+    noInterrupts();
+    bool interrupted = callInterrupted;
+    callInterrupted = false;
+    interrupts();
+    return interrupted;
+}
+
+int fan_dimmer_diagnostics() {
+    noInterrupts();
+    bool recent = zeroCrossAtUs != 0 && micros() - zeroCrossAtUs <= ZC_TIMEOUT_US;
+    bool valid = recent && !zeroCrossSuppressed &&
+                 validZeroCrossIntervals >= ZC_REQUIRED_CONSECUTIVE;
+    int flags = (phaseTimerReady ? 1 : 0) | (recent ? 2 : 0) |
+                (valid ? 4 : 0) | (valid && zeroCrossStable ? 8 : 0) |
+                (zeroCrossSuppressed ? 16 : 0) | (outputUsesPhaseControl ? 32 : 0);
+    interrupts();
+    return flags | (sys.fanFinal > 0 ? 64 : 0) |
+           (sys.controlMode == RUNMODE_CONTINUOUS ? 128 : 0);
 }

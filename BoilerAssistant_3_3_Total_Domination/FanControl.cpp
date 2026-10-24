@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Fan Control Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - Fan Control Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanControl.cpp
  *  Author: The Architect Collective
@@ -33,13 +33,15 @@
  *      - Output is always deterministic and operator-visible.
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
 #include "FanControl.h"
 #include "SystemState.h"
 #include "SystemData.h"
+#include "FanDimmer.h"
+#include "Pinout.h"
 #include <Arduino.h>
 
 /* ============================================================
@@ -139,6 +141,16 @@ static void fancontrol_handleStateChange() {
  *  MAIN FAN COMPUTE FUNCTION
  * ============================================================ */
 int fan_compute(int demand) {
+
+    if (sys.controlMode == RUNMODE_CONTINUOUS && !fan_dimmer_boilerCallReady()) {
+        sys.burnState = BURN_IDLE;
+        fancontrol_handleStateChange();
+        fanOn = false;
+        lastOutput = 0;
+        lastRampMs = millis();
+        digitalWrite(PIN_DAMPER, HIGH);
+        return 0;
+    }
 
     fancontrol_handleStateChange();
 

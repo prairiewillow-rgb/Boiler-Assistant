@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi Provisioning Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -35,7 +35,7 @@
  *      - UI/telemetry use cached network data; control uses cached UTC
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -121,7 +121,7 @@ bool wifi_prov_prepareClientIo() {
 void wifi_prov_finishIo(unsigned long startedMs, const char* source) {
     if (ota_isActive() || bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT ||
         millis() - startedMs < MODEM_RUNTIME_TIMEOUT_MS) return;
-    Serial.print("WiFi: slow/unresponsive modem operation: ");
+    Serial.print("WiFi: modem slow: ");
     Serial.println(source);
     sys.wifiOK = false;
     bridgeRecovery = BRIDGE_QUIET;
@@ -140,12 +140,12 @@ static bool serviceBridgeRecovery() {
         modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
         OTAUpdate bridge;
         if (bridge.reset() != 0) {
-            Serial.println("WiFi: bridge reset not acknowledged; staying offline for 60s");
+            Serial.println("WiFi: reset no ACK; offline 60s");
             bridgeQuietIntervalMs = 60000UL;
             bridgeRecoveryMs = millis();
             return true;
         }
-        Serial.println("WiFi: bridge reset acknowledged; waiting for reboot");
+        Serial.println("WiFi: reset ACK; reboot wait");
         bridgeWasReset = true;
         bridgeRecovery = BRIDGE_BOOT_WAIT;
         bridgeRecoveryMs = millis();
@@ -176,14 +176,14 @@ static bool serviceBridgeRecovery() {
         joinRetryMs = 30000UL;
         lastJoinAttemptMs = bridgeWasReset ? millis() - joinRetryMs : millis();
         bridgeRecovery = BRIDGE_NORMAL;
-        Serial.println("WiFi: socket cleanup complete; saved-network retries resume");
+        Serial.println("WiFi: sockets cleared; retry");
     }
     if (millis() - cleanupStartMs >= MODEM_RUNTIME_TIMEOUT_MS) {
         bridgeRecovery = BRIDGE_QUIET;
         bridgeRecoveryMs = millis();
         bridgeQuietIntervalMs = 15000UL;
         bridgeWasReset = false;
-        Serial.println("WiFi: socket cleanup stalled; quarantining bridge again");
+        Serial.println("WiFi: cleanup stalled; quarantine");
     }
     return true;
 }
@@ -194,7 +194,7 @@ static void beginStationAttempt() {
     WiFi.setTimeout(0);
     WiFi.begin(runtimeCreds.ssid, runtimeCreds.pass);
     lastJoinAttemptMs = millis();
-    Serial.println("WiFi: station join requested; control continues offline");
+    Serial.println("WiFi: joining; control offline");
 }
 
 /* Simple HTML portal */
@@ -217,7 +217,7 @@ static const char* PROV_HTML =
  * ============================================================ */
 
 void wifi_prov_factoryReset() {
-    Serial.println("WiFiProvisioning: FACTORY RESET");
+    Serial.println("WiFi: FACTORY RESET");
 
     memset(&runtimeCreds, 0, sizeof(runtimeCreds));
     runtimeCreds.hasCredentials = false;
@@ -227,7 +227,7 @@ void wifi_prov_factoryReset() {
     // Persist the cleared credentials
     eeprom_saveRuntimeCreds();
 
-    Serial.println("WiFiProvisioning: rebooting after factory reset...");
+    Serial.println("WiFi: reset reboot");
     delay(1000);
     NVIC_SystemReset();
 }
@@ -237,7 +237,7 @@ void wifi_prov_factoryReset() {
  * ============================================================ */
 
 static void startAP() {
-    Serial.println("WiFiProvisioning: Starting AP mode...");
+    Serial.println("WiFi: AP start");
 
     WiFi.end();
     WiFi.disconnect();
@@ -251,7 +251,7 @@ static void startAP() {
 
     int result = WiFi.beginAP("BoilerAssistant-Setup");
 
-    Serial.print("WiFiProvisioning: AP start result = ");
+    Serial.print("WiFi: AP result=");
     Serial.println(result);
 
     apMode = true;
@@ -265,13 +265,13 @@ static void startAP() {
  * ============================================================ */
 
 void wifi_prov_init() {
-    Serial.println("WiFiProvisioning: init (saved STA retries; AP only without credentials)");
+    Serial.println("WiFi: init; saved STA retry/no creds AP");
 
     sys.wifiOK = false;
     WiFi.setHostname("boilerassistant");
 
     if (runtimeCreds.hasCredentials && runtimeCreds.ssid[0] != 0) {
-        Serial.print("WiFiProvisioning: Using runtime SSID: ");
+        Serial.print("WiFi: SSID: ");
         Serial.println(runtimeCreds.ssid);
 
         WiFi.end();
@@ -306,7 +306,7 @@ void wifi_prov_networkLoop() {
     if (apMode || !runtimeCreds.hasCredentials || runtimeCreds.ssid[0] == '\0') return;
     if (cachedUTC != 0 && millis() - utcAnchorMs >= 86400000UL) {
         cachedUTC = 0;
-        Serial.println("WiFi: cached clock expired; scheduled self-clean waits for time sync");
+        Serial.println("WiFi: clock expired; clean waits sync");
     }
     if (ota_isActive() || serviceBridgeRecovery()) return;
     unsigned long now = millis();
@@ -334,7 +334,7 @@ void wifi_prov_networkLoop() {
         linkDetected = false;
         lastJoinAttemptMs = millis();
         joinRetryMs = 30000UL;
-        Serial.println("WiFi: link/IP lost; local control stays active");
+        Serial.println("WiFi: link/IP lost; control active");
         serviceIP = IPAddress();
         cachedRSSI = 0;
         return;
@@ -352,7 +352,7 @@ void wifi_prov_networkLoop() {
             serviceIP = ip;
             joinRetryMs = 30000UL;
             wifiapi_init();
-            Serial.print("WiFi: stable link restored. Dashboard IP: ");
+            Serial.print("WiFi: link restored; IP: ");
             Serial.println(ip);
             return;
         }
@@ -365,7 +365,7 @@ void wifi_prov_networkLoop() {
                     cachedUTC = utc;
                     utcAnchorMs = millis();
                 } else {
-                    Serial.println("WiFi: time unavailable; retaining unexpired cached clock");
+                    Serial.println("WiFi: no time; keep valid cache");
                 }
             } else if (now - lastRSSIMs >= 15000UL) {
                 lastRSSIMs = now;
@@ -408,7 +408,7 @@ static void parseForm(const String& body) {
     String displayName = getVal("displayName");
 
     if (ssid.length() == 0 || pass.length() == 0) {
-        Serial.println("WiFiProvisioning: missing SSID or password");
+        Serial.println("WiFi: missing SSID/password");
         return;
     }
 
@@ -451,7 +451,7 @@ static void parseForm(const String& body) {
     // Persist credentials
     eeprom_saveRuntimeCreds();
 
-    Serial.println("WiFiProvisioning: New credentials received and saved to EEPROM");
+    Serial.println("WiFi: credentials saved");
 }
 
 /* ============================================================
@@ -472,9 +472,9 @@ void wifi_prov_loop() {
 
     if (req.length() == 0) return;
 
-    Serial.println("WiFiProvisioning: RAW REQUEST BEGIN");
+    Serial.println("WiFi: REQUEST BEGIN");
     Serial.println(req);
-    Serial.println("WiFiProvisioning: RAW REQUEST END");
+    Serial.println("WiFi: REQUEST END");
 
     if (req.startsWith("POST ")) {
         int bodyPos = req.indexOf("\r\n\r\n");
@@ -489,7 +489,7 @@ void wifi_prov_loop() {
         client.println("<html><body><h3>Saved. Rebooting...</h3></body></html>");
         client.stop();
 
-        Serial.println("WiFiProvisioning: RESETTING NOW");
+        Serial.println("WiFi: RESET NOW");
         delay(500);
         NVIC_SystemReset();
         return;

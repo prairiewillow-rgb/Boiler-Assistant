@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Burn Engine Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - Burn Engine Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -40,7 +40,7 @@
  *      - All timing uses millis() and remains strictly non-blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -80,6 +80,8 @@ static const unsigned long HOLD_LOW_CONFIRM_MS = 15000UL;
 static const double HOLD_EXIT_HYSTERESIS_F = 10.0;
 // Mode 0: fan latches on below the band and stays on until exhaust reaches setpoint.
 static bool holdFanCalling = false;
+static unsigned long guardianLowSinceMs = 0;
+static unsigned long guardianRecoveredSinceMs = 0;
 // Degrees below the band over which HOLD fan demand scales from min to max clamp.
 static const double HOLD_RECOVERY_SPAN_F = 50.0;
 
@@ -302,6 +304,24 @@ int burnengine_compute() {
 
     updateBurnHistory(now);
 
+    bool callInterrupted = fan_dimmer_takeCallInterrupted();
+    if (sys.controlMode == RUNMODE_CONTINUOUS &&
+        (callInterrupted || !fan_dimmer_boilerCallReady())) {
+        sys.burnState = BURN_IDLE;
+        updateBurnHistory(now);
+        sys.boostActive = false;
+        sys.rampTimerActive = false;
+        sys.holdTimerActive = false;
+        sys.emberGuardianTimerActive = false;
+        sys.emberGuardianStartMs = 0;
+        sys.emberGuardianActive = false;
+        guardianLowSinceMs = guardianRecoveredSinceMs = holdLowSinceMs = 0;
+        holdFanCalling = false;
+        // Call changes must not clear safety or Guardian latches.
+        digitalWrite(PIN_DAMPER, HIGH);
+        return 0;
+    }
+
     if (!sys.selfCleanEnabled) {
         sys.selfCleanDue = false;
         sys.selfCleanActive = false;
@@ -520,8 +540,6 @@ static int burnengine_computeHoldDemand(double exhaustControlF,
  * countdown starts or cancels so it cannot restart/clear randomly. */
 static const unsigned long GUARDIAN_START_CONFIRM_MS   = 15000UL;
 static const unsigned long GUARDIAN_RECOVER_CONFIRM_MS = 30000UL;
-static unsigned long guardianLowSinceMs       = 0;
-static unsigned long guardianRecoveredSinceMs = 0;
 
 /* ============================================================
  *  SHARED GUARDIAN + DAMPER + FAN APPLY
@@ -775,15 +793,8 @@ static int burnengine_computeContinuous() {
     double exhaustControlF = sys.exhaustSmoothF;
     double exhaustGuardF   = sys.exhaustRawF;
 
-    /* AUTO-START: Continuous mode runs a power-switched install. On
-     * power-up it must self-start a BOOST (no keypad press) and then run
-     * the whole burn off exhaust temp, stopping only when the main unit
-     * cuts power. IDLE is only reachable here at boot - Continuous never
-     * transitions to IDLE on its own, and burnengine_resetAlarms() forces
-     * SAFETY_OK before returning to IDLE - so a safety-latched shutdown
-     * cannot auto-restart the fire.
-     */
-    if (sys.burnState == BURN_IDLE) {
+    // Dispatcher waits for stable boiler ZC without clearing latched faults.
+    if (sys.burnState == BURN_IDLE && !sys.emberGuardianLatched) {
         burnengine_startBoost();
     }
 

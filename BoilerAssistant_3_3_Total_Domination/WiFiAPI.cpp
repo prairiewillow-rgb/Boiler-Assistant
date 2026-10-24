@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi JSON API Module (v3.3.10 "Total Domination")
+ *  Boiler Assistant - WiFi JSON API Module (v3.3.11 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.10 "Total Domination"
+ *      Boiler Assistant v3.3.11 "Total Domination"
  * ============================================================
  */
 
@@ -41,6 +41,7 @@
 #include "EEPROMStorage.h"
 #include "ConfigValidation.h"
 #include "DashboardHTML.h"
+#include "FanDimmer.h"
 #include "BurnEngine.h"
 #include "PushNotify.h"
 #include "RuntimeWiFiClient.h"
@@ -116,7 +117,7 @@ static void queueResponse(const char* status, const char* contentType,
         "Connection: close\r\nContent-Length: %u\r\n\r\n",
         status, contentType, static_cast<unsigned int>(length));
     if (headerLength < 0 || static_cast<size_t>(headerLength) >= sizeof(httpResponseHeaders)) {
-        Serial.println("WiFiAPI: response headers exceeded buffer");
+        Serial.println("HTTP: header overflow");
         closeHttp();
         return;
     }
@@ -131,7 +132,7 @@ static void queueResponse(const char* status, const char* contentType,
 
 static void queueJson(const char* status, String json) {
     if (!json) {
-        Serial.println("WiFiAPI: response allocation failed");
+        Serial.println("HTTP: response OOM");
         static const char error[] = "{\"error\":\"insufficient memory\"}";
         queueResponse("503 Service Unavailable", "application/json", error, sizeof(error) - 1);
         return;
@@ -210,6 +211,10 @@ static int requestContentLength(const String& headers) {
 
 static String buildStateJson() {
     stateDoc.clear();
+    stateDoc["fan_diag"] = fan_dimmer_diagnostics();
+    bool boilerWaiting = sys.controlMode == RUNMODE_CONTINUOUS &&
+                         !fan_dimmer_boilerCallReady();
+    stateDoc["boiler_waiting"] = boilerWaiting;
 
     const char* burnText =
         (sys.burnState == BURN_IDLE) ? "IDLE" :
@@ -245,7 +250,8 @@ static String buildStateJson() {
     stateDoc["exhaust_fallback"] = sys.exhaustFallbackActive;
     const char* alertText = "";
     if (sys.exhaustFallbackActive) {
-        alertText = "EXHAUST PROBE NEEDS CLEANING - FAN AT MAX";
+        alertText = boilerWaiting ? "EXHAUST PROBE FAULT - FAN OFF / NO ZC" :
+                                    "EXHAUST PROBE NEEDS CLEANING - FAN AT MAX";
     } else if (sys.emberGuardianLatched || sys.burnState == BURN_EMBER_GUARD) {
         alertText = "EMBER GUARDIAN ACTIVE - RESET REQUIRED";
     } else if (sys.safetyState == SAFETY_HIGHTEMP) {
@@ -259,6 +265,7 @@ static String buildStateJson() {
     stateDoc["tank_temp"] = tankTemp;
     stateDoc["tank_sensor_ok"] = tankSensorOK;
     stateDoc["exhaust_sensor_ok"] = sys.exhaustSensorOK;
+    if (sys.exhaustLastGoodMs) stateDoc["exhaust_age_ms"] = millis() - sys.exhaustLastGoodMs;
     stateDoc["wifi_ok"] = sys.wifiOK;
     stateDoc["display_name"] = runtimeCreds.displayName;
     stateDoc["tank_low"] = sys.tankLowSetpointF;
@@ -284,6 +291,7 @@ static String buildStateJson() {
     }
 
     JsonObject env = stateDoc.createNestedObject("env");
+    env["sensor_ok"] = sys.envSensorOK;
     env["temp_f"]   = sys.envTempF;
     env["humidity"] = sys.envHumidity;
     env["pressure"] = sys.envPressure;
@@ -297,8 +305,13 @@ static String buildStateJson() {
         probe["temp_f"] = sys.waterTempF[i];
         probe["sensor_ok"] = millis() - sys.waterTempLastGoodMs[i] <= 3000UL;
         probe["controls_tank"] = sys.probeRoleMap[PROBE_TANK] == i;
+        if (sys.waterTempLastGoodMs[i]) probe["age_ms"] = millis() - sys.waterTempLastGoodMs[i];
     }
 
+    if (stateDoc.overflowed()) {
+        Serial.println("HTTP: state overflow");
+        return "{\"error\":\"State response too large\"}";
+    }
     String out;
     serializeJson(stateDoc, out);
     return out;
@@ -308,7 +321,7 @@ static String buildHistoryJson() {
     String out;
     if (!out.reserve(96 + sys.burnHistoryCount * 120 +
                      sys.waterHistoryCount * 12)) {
-        Serial.println("WiFiAPI: insufficient memory for history response");
+        Serial.println("HTTP: history OOM");
         return "{\"error\":\"insufficient memory for history\"}";
     }
     out += "{\"history_now_min\":";
@@ -613,11 +626,11 @@ static void handleApiReset(WiFiClient& client) {
 
 void wifiapi_init() {
     if (wifi_prov_isAPMode()) {
-        Serial.println("WiFiAPI: skipped (AP mode active)");
+        Serial.println("HTTP: AP active");
         return;
     }
 
-    Serial.println("WiFiAPI: init");
+    Serial.println("HTTP: init");
 
     const char* ssid = getWifiSSID();
     const char* pass = getWifiPASS();
@@ -740,7 +753,7 @@ void wifiapi_loop() {
 
     if (httpPhase == HTTP_SENDING) {
         if (now - httpStartedMs >= HTTP_SEND_TIMEOUT_MS) {
-            Serial.println("WiFiAPI: response timed out; closing client");
+            Serial.println("HTTP: send timeout; close");
             closeHttp();
             return;
         }
@@ -755,7 +768,7 @@ void wifiapi_loop() {
             size_t written = httpClient.write(
                 reinterpret_cast<const uint8_t*>(data + offset), count);
             if (written == 0) {
-                Serial.println("WiFiAPI: response write failed; closing client");
+                Serial.println("HTTP: write failed; close");
                 closeHttp();
                 return;
             }
@@ -767,7 +780,7 @@ void wifiapi_loop() {
     }
 
     if (now - httpStartedMs >= HTTP_RECEIVE_TIMEOUT_MS) {
-        Serial.println("WiFiAPI: incomplete request timed out");
+        Serial.println("HTTP: request timeout");
         queueJson("408 Request Timeout", "{\"error\":\"request timed out\"}");
         return;
     }
@@ -783,7 +796,7 @@ void wifiapi_loop() {
         if (!httpHeadersComplete) {
             if (httpHeaders.length() >= HTTP_HEADER_LIMIT ||
                 !httpHeaders.concat(static_cast<char>(buffer[i]))) {
-                Serial.println("WiFiAPI: headers too large or allocation failed");
+                Serial.println("HTTP: headers large/OOM");
                 queueJson("431 Request Header Fields Too Large",
                           "{\"error\":\"headers too large\"}");
                 return;
@@ -792,14 +805,14 @@ void wifiapi_loop() {
                 httpHeadersComplete = true;
                 httpContentLength = requestContentLength(httpHeaders);
                 if (httpContentLength < 0) {
-                    Serial.println("WiFiAPI: unsupported or oversized request body");
+                    Serial.println("HTTP: body unsupported/large");
                     queueJson("400 Bad Request", "{\"error\":\"invalid content length or encoding\"}");
                     return;
                 }
             }
         } else if (httpBody.length() < static_cast<unsigned int>(httpContentLength)) {
             if (!httpBody.concat(static_cast<char>(buffer[i]))) {
-                Serial.println("WiFiAPI: request body allocation failed");
+                Serial.println("HTTP: body OOM");
                 queueJson("503 Service Unavailable", "{\"error\":\"insufficient memory\"}");
                 return;
             }
