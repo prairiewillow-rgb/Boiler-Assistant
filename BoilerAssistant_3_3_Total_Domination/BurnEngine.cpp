@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Burn Engine Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Burn Engine Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: BurnEngine.cpp
  *  Author: The Architect Collective
@@ -40,7 +40,7 @@
  *      - All timing uses millis() and remains strictly non-blocking
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -303,24 +303,6 @@ int burnengine_compute() {
     unsigned long now = millis();
 
     updateBurnHistory(now);
-
-    bool callInterrupted = fan_dimmer_takeCallInterrupted();
-    if (sys.controlMode == RUNMODE_CONTINUOUS &&
-        (callInterrupted || !fan_dimmer_boilerCallReady())) {
-        sys.burnState = BURN_IDLE;
-        updateBurnHistory(now);
-        sys.boostActive = false;
-        sys.rampTimerActive = false;
-        sys.holdTimerActive = false;
-        sys.emberGuardianTimerActive = false;
-        sys.emberGuardianStartMs = 0;
-        sys.emberGuardianActive = false;
-        guardianLowSinceMs = guardianRecoveredSinceMs = holdLowSinceMs = 0;
-        holdFanCalling = false;
-        // Call changes must not clear safety or Guardian latches.
-        digitalWrite(PIN_DAMPER, HIGH);
-        return 0;
-    }
 
     if (!sys.selfCleanEnabled) {
         sys.selfCleanDue = false;
@@ -793,7 +775,14 @@ static int burnengine_computeContinuous() {
     double exhaustControlF = sys.exhaustSmoothF;
     double exhaustGuardF   = sys.exhaustRawF;
 
-    // Dispatcher waits for stable boiler ZC without clearing latched faults.
+    /* AUTO-START: Continuous mode runs a power-switched install. On
+     * power-up it must self-start a BOOST (no keypad press) and then run
+     * the whole burn off exhaust temp, stopping only when the main unit
+     * cuts power. IDLE is only reachable here at boot or after an alarm
+     * reset - burnengine_resetAlarms() forces SAFETY_OK before returning
+     * to IDLE - and a latched Ember Guardian never auto-restarts the fire.
+     * 3.3.12 restores this 3.3.9 behavior; Continuous does not follow Z-C.
+     */
     if (sys.burnState == BURN_IDLE && !sys.emberGuardianLatched) {
         burnengine_startBoost();
     }

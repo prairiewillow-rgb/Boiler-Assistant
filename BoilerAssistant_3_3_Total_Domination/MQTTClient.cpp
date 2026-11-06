@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - MQTT Client Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - MQTT Client Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: MQTTClient.cpp
  *  Author: The Architect Collective
@@ -31,7 +31,7 @@
  *      - Reconnect logic is rate-limited and deterministic
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -151,7 +151,7 @@ void mqtt_init() {
                          prov_mqtt_pass[0] != '\0';
 
     if (!mqttAuthConfigured) {
-        Serial.println("MQTT: disabled because broker authentication is not configured");
+        Serial.println("MQTT: off; no broker login set");
         return;
     }
 

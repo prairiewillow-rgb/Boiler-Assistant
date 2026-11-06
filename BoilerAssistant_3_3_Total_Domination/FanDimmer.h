@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Fan Dimmer API (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Fan Dimmer API (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: FanDimmer.h
  *  License: CC BY-NC-SA 4.0
@@ -8,10 +8,10 @@
  *  Description:
  *  Public interface for the fan dimmer output driver. Callers set
  *  the requested fan percentage; the module selects zero-cross PSM
- *  phase control or, in Auto Tank only, legacy PWM automatically.
+ *  phase control or legacy PWM automatically.
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -25,7 +25,8 @@ int fan_dimmer_setPercent(int percent);
 bool fan_dimmer_phaseModeActive();
 bool fan_dimmer_boilerCallReady();
 bool fan_dimmer_takeCallInterrupted();
-// Bits: timer, recent edge, valid periods, stable, noise, phase, command, Continuous.
+// Bits: timer, recent edge, valid periods, stable, noise, phase, command,
+// Z-C required (always 0 in 3.3.12).
 int fan_dimmer_diagnostics();
 
 #endif

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - UI API (v3.3.11 "Total Domination")
+ *  Boiler Assistant - UI API (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.h
  *  Author: The Architect Collective
@@ -23,7 +23,7 @@
  *      - Cached network information; invalid BME shows a sensor error
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 

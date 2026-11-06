@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Web Dashboard (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Web Dashboard (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: DashboardHTML.h
  *  Maintainer: Karl (Embedded Systems Architect)
@@ -14,7 +14,7 @@
  *    pauses in hidden tabs; settings/history cache lasts 60s.
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -22,6 +22,7 @@
 #define DASHBOARD_HTML_H
 
 #include <Arduino.h>
+#include "Version.h"
 
 // Live polling waits 5s after a completed cycle. Hidden tabs stop polling;
 // all API calls share one queue through JSON consumption (15s timeout).
@@ -157,7 +158,6 @@ function syncStateAlarm(){const bar=document.querySelector('.stateBar');const st
 drawSwipeWaterChart=function(values){const canvas=document.getElementById('burnGraph');const viewport=document.getElementById('historyViewport');if(!canvas||!viewport)return;const visibleWidth=Math.max(1,viewport.clientWidth);const height=canvas.clientHeight||228;const count=720;const padded=Array(count).fill(-1);(values||[]).slice(-count).forEach((value,index)=>{padded[count-Math.min(count,values.length)+index]=Number(value)});const fullWidth=Math.max(visibleWidth,count*2);const scale=window.devicePixelRatio||1;canvas.style.width=fullWidth+'px';canvas.width=fullWidth*scale;canvas.height=height*scale;const ctx=canvas.getContext('2d');ctx.setTransform(scale,0,0,scale,0,0);ctx.clearRect(0,0,fullWidth,height);const valid=padded.filter(value=>Number.isFinite(value)&&value>=0);const min=100;const max=Math.max(200,Math.ceil((Math.max(...valid,200)+20)/20)*20);const left=42;const right=12;const top=16;const bottom=30;const plotW=fullWidth-left-right;const plotH=height-top-bottom;ctx.font='10px sans-serif';ctx.textAlign='right';for(let i=0;i<=4;i++){const y=top+plotH-(plotH*i/4);ctx.strokeStyle='#30414a';ctx.setLineDash([5,6]);ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(fullWidth-right,y);ctx.stroke();ctx.fillStyle='#8ea1a8';ctx.fillText(Math.round(min+(max-min)*i/4)+' F',left-6,y+3)}ctx.setLineDash([]);ctx.strokeStyle='#52636a';ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(left,top+plotH);ctx.lineTo(fullWidth-right,top+plotH);ctx.stroke();ctx.fillStyle='#8ea1a8';ctx.textAlign='center';['12h ago','9h','6h','3h','Now'].forEach((label,index)=>{const x=left+plotW*index/4;ctx.fillText(label,x,height-10)});ctx.strokeStyle='#55c4c7';ctx.lineWidth=2.5;ctx.beginPath();let started=false;padded.forEach((value,index)=>{if(!Number.isFinite(value)||value<0){started=false;return}const x=left+plotW*index/(count-1);const y=top+plotH-((value-min)/(max-min))*plotH;if(started)ctx.lineTo(x,y);else{ctx.moveTo(x,y);started=true}});ctx.stroke();viewport.scrollLeft=Math.max(0,fullWidth-visibleWidth)}
 async function state(){try{const s=await requestJson('/api/state');if(s.error)throw new Error(s.error);lastState=s;lastStateMs=Date.now();renderSelfClean(s);renderFanDiagnostics(s);text('pushStatus','Last push delivery: '+(s.push_status||'Idle'));
  const fanValue=Number(s.fan_final??s.fan??0);const fanOff=s.burn_state_text==='IDLE'||fanValue<=0;const exhaustValue=Number(s.exhaust_smooth);const setpoint=Number(document.getElementById('exhaust_setpoint').value||500);const deadband=Number(document.getElementById('deadband').value||15);const metric=s.env?.units==='metric';const outdoor=s.env?.temp_f===null?'ERR':(metric?Math.round((s.env?.temp_f-32)*5/9)+' C':Math.round(s.env?.temp_f)+' F');const humidity=s.env?.humidity===null?'ERR':Math.round(s.env?.humidity)+'%';const pressure=s.env?.pressure===null?'ERR':(metric?(Number(s.env?.pressure)/10).toFixed(1)+' kPa':(Number(s.env?.pressure)*0.02953).toFixed(2)+' inHg');const exhaustGauge=document.getElementById('exhaustGauge');const fanIcon=document.getElementById('fanIcon');const brandMark=document.getElementById('brandMark');const brandTemp=document.getElementById('brandTemp');const burnState=s.burn_state_text||s.burn_state;const isIdle=burnState==='IDLE';text('connection','Online');text('burnState',burnState);text('brandTemp',Number.isNaN(exhaustValue)?'Exhaust ---':'Exhaust '+Math.round(exhaustValue)+' F');brandMark.classList.toggle('idle',isIdle);brandMark.classList.toggle('burning',!isIdle&&burnState!=='EMBER_GUARD');text('exhaust',Number.isNaN(exhaustValue)?'ERR':Math.round(exhaustValue)+' F');text('fan',fanOff?'OFF':fanValue+'%');text('adaptiveSlope',Number(s.adaptive_slope??1).toFixed(3));text('tank',s.tank_temp===null?'ERR':Math.round(s.tank_temp)+' F');text('tankLimits',(s.tank_high??'---')+' / '+(s.tank_low??'---')+' F');text('outdoor',outdoor);text('humidity',humidity);text('pressure',pressure);text('mainOutdoor',outdoor);text('mainHumidity',humidity);text('mainPressure',pressure);text('exhaustOk',s.exhaust_sensor_ok?'OK':'FAULT');text('tankOk',s.tank_sensor_ok?'OK':'FAULT');text('wifi',s.wifi_ok?'OK':'OFF');fanIcon.classList.toggle('running',!fanOff);document.getElementById('fanGauge').style.setProperty('--gauge',fanValue+'%');exhaustGauge.classList.remove('cold','good','hot');exhaustGauge.classList.add(Number.isNaN(exhaustValue)||exhaustValue<setpoint-deadband?'cold':exhaustValue>setpoint+deadband?'hot':'good');exhaustGauge.style.setProperty('--gauge',Math.max(0,Math.min(100,exhaustValue/setpoint*100))+'%');renderProbes(s.water);showAlert(s.alert||'');
- if(s.boiler_waiting&&!s.alert)text('burnState','WAIT BOILER / NO ZC');
  }catch(e){renderFanDiagnostics(null);lastStateMs=0;text('connection','Offline');showAlert('Controller unavailable');throw e}}
 function initSelfCleanTimeOptions(){['self_clean_start_hour','self_clean_end_hour'].forEach(id=>{const select=document.getElementById(id);if(!select)return;if(select.options.length>0)return;for(let hour=0;hour<24;hour++){const suffix=hour<12?'AM':'PM';const displayHour=hour%12||12;select.add(new Option(displayHour+' '+suffix,hour))}})}
 async function settings(){initSelfCleanTimeOptions();const s=await requestJson('/api/settings');ids.forEach(k=>set(k,s[k]));const zone=document.getElementById('self_clean_timezone');if(zone){const zv=String(s.self_clean_utc_offset)+'|'+(s.self_clean_dst?1:0);for(let i=0;i<zone.options.length;i++){if(zone.options[i].value===zv){zone.value=zv;break}}}lastSettingsMs=Date.now();if(lastState)renderSelfClean(lastState)}
@@ -172,6 +172,7 @@ document.getElementById('save').onclick=runAction(save);document.getElementById(
 )rawliteral"
 #include "DiagnosticsDashboard.h"
 #include "HealthDashboard.h"
+#include "WhatsNewDashboard.h"
 R"rawliteral(
 <script>pollNow();</script></body></html>
 )rawliteral";

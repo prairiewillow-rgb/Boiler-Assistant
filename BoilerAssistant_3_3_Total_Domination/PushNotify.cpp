@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Push Delivery (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Push Delivery (v3.3.12 "Total Domination")
  *  File: PushNotify.cpp
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -13,7 +13,7 @@
  *    Interrupted delivery has an unknown outcome and is not
  *    blindly retried.
  *
- *  Version: Boiler Assistant v3.3.11 "Total Domination"
+ *  Version: Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -162,7 +162,7 @@ void pushnotify_loop() {
             pushPhase = PUSH_IDLE;
             queueCount = 0;
             deliveryStatus = "Cancelled: push disabled";
-            Serial.println("Push: queued notifications cancelled because push is disabled");
+            Serial.println("Push: off; queue cleared");
         }
         prevHighTemp        = (sys.safetyState == SAFETY_HIGHTEMP);
         prevTankFault       = (sys.safetyState == SAFETY_SENSOR_FAULT &&
@@ -225,6 +225,6 @@ void pushnotify_networkLost() {
             --queueCount;
         }
         deliveryStatus = "Interrupted: WiFi lost";
-        Serial.println("Push: delivery interrupted by WiFi loss; outcome unknown");
+        Serial.println("Push: WiFi lost mid-send; result unknown");
     }
 }

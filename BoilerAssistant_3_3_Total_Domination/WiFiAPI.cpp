@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi JSON API Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - WiFi JSON API Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiAPI.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *      - SystemData is the single source of truth
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -97,8 +97,10 @@ static const size_t HTTP_HEADER_LIMIT = 1024;
 static const size_t HTTP_BODY_LIMIT = 1024;
 static const size_t HTTP_READ_CHUNK = 256;
 static const size_t HTTP_WRITE_CHUNK = 512;
-static const unsigned long HTTP_RECEIVE_TIMEOUT_MS = 2000UL;
-static const unsigned long HTTP_SEND_TIMEOUT_MS = 12000UL;
+// Non-blocking windows: one chunk per loop pass, so weak links get more time
+// without pausing control.
+static const unsigned long HTTP_RECEIVE_TIMEOUT_MS = 5000UL;
+static const unsigned long HTTP_SEND_TIMEOUT_MS = 30000UL;
 
 static void closeHttp() {
     httpClient.stop();
@@ -212,9 +214,6 @@ static int requestContentLength(const String& headers) {
 static String buildStateJson() {
     stateDoc.clear();
     stateDoc["fan_diag"] = fan_dimmer_diagnostics();
-    bool boilerWaiting = sys.controlMode == RUNMODE_CONTINUOUS &&
-                         !fan_dimmer_boilerCallReady();
-    stateDoc["boiler_waiting"] = boilerWaiting;
 
     const char* burnText =
         (sys.burnState == BURN_IDLE) ? "IDLE" :
@@ -250,8 +249,7 @@ static String buildStateJson() {
     stateDoc["exhaust_fallback"] = sys.exhaustFallbackActive;
     const char* alertText = "";
     if (sys.exhaustFallbackActive) {
-        alertText = boilerWaiting ? "EXHAUST PROBE FAULT - FAN OFF / NO ZC" :
-                                    "EXHAUST PROBE NEEDS CLEANING - FAN AT MAX";
+        alertText = "EXHAUST PROBE NEEDS CLEANING - FAN AT MAX";
     } else if (sys.emberGuardianLatched || sys.burnState == BURN_EMBER_GUARD) {
         alertText = "EMBER GUARDIAN ACTIVE - RESET REQUIRED";
     } else if (sys.safetyState == SAFETY_HIGHTEMP) {
@@ -636,7 +634,7 @@ void wifiapi_init() {
     const char* pass = getWifiPASS();
 
     if (ssid[0] == 0) {
-        Serial.println("WiFiAPI: no credentials â†’ skipping");
+        Serial.println("WiFiAPI: no creds; skip");
         sys.wifiOK = false;
         return;
     }

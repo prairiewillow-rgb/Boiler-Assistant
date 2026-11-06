@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi Provisioning API (v3.3.11 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning API (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.h
  *  Author: The Architect Collective
@@ -34,7 +34,7 @@
  *      - SystemData is the single source of truth for WiFi status
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -52,7 +52,13 @@ int32_t wifi_prov_cachedRSSI();
 unsigned long wifi_prov_cachedUTC();
 bool wifi_prov_prepareIo();
 bool wifi_prov_prepareClientIo();
-void wifi_prov_finishIo(unsigned long startedMs, const char* source);
+// One bridge command may wait this long for its reply. Reaching it means the
+// reply was abandoned; a late reply would be misread, so the bridge is reset.
+#define WIFI_STEP_LIMIT_MS 5000UL
+// A whole loop pass (several commands) is only a backstop on slow links.
+#define WIFI_PASS_LIMIT_MS 15000UL
+void wifi_prov_finishIo(unsigned long startedMs, const char* source,
+                        unsigned long limitMs = WIFI_STEP_LIMIT_MS);
 bool wifi_prov_isAPMode();
 bool wifi_prov_has_credentials();
 

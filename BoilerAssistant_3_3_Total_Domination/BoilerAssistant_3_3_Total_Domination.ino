@@ -1,15 +1,15 @@
 /*
  * ============================================================
- *  Boiler Assistant - Main Firmware (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Main Firmware (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_3_11_Total_Domination.ino
+ *  File: BoilerAssistant_3_3_12_Total_Domination.ino
  *  Author: The Architect Collective
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
  *
  *  Description:
  *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.11 continues the Total Domination Architecture (TDA):
+ *    Version 3.3.12 continues the Total Domination Architecture (TDA):
  *      - SystemData as the single source of truth
  *      - Timed/event-driven main loop with bounded sensor transactions
  *      - Unified keypad-driven UI with numeric selection everywhere
@@ -42,11 +42,29 @@
  *      - 2-second startup kick before returning to requested speed
  *      - Zero-cross phase control with automatic PWM fallback
  *
- *  v3.3.11 Release:
- *      - Release identity and source headers updated to 3.3.11
- *      - Retains the LiquidCrystal_PCF8574 rollback from updated 3.3.9
+ *  v3.3.12 Release:
+ *      - LCD backlight turns off after 5 minutes without a key press;
+ *        stays on while a safety, Ember Guardian or exhaust-fallback
+ *        alarm is active. The waking key press is not acted on.
+ *      - Wake press, and the first press after a 5-second pause, fully
+ *        reinitialize the LCD and repaint every row to recover a stuck screen
+ *      - Continuous mode rolled back to 3.3.9 behavior: no longer follows
+ *        boiler Z-C. Auto-starts BOOST at power-up and when selected; uses
+ *        the same Z-C phase control / PWM fallback as Auto Tank.
+ *      - Dashboard "What's new" card (WhatsNewDashboard.h): shown at the top
+ *        of Main once per browser after an update, then kept in Settings.
+ *        Edit its list for every release.
+ *      - Wi-Fi more patient on weak links: each bridge command may wait 5 s
+ *        (was 3 s) before the bridge is reset; whole loop passes are only a
+ *        15 s backstop, so a slow page load no longer resets Wi-Fi by itself.
+ *        Time/RSSI/join commands are now timed individually. Dashboard send
+ *        window 30 s (was 12 s), request window 5 s (was 2 s).
  *      - Fan modes, burn logic, pin mappings and EEPROM layout unchanged
  *      - Compiled firmware still requires validation on installed hardware
+ *
+ *  v3.3.11 Release (retained):
+ *      - Release identity and source headers updated to 3.3.11
+ *      - Retains the LiquidCrystal_PCF8574 rollback from updated 3.3.9
  *
  *  v3.3.9 Additions (retained):
  *      - PCF8574-compatible 100 kHz shared I2C bus
@@ -91,7 +109,7 @@
  *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -184,7 +202,7 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.11 Boot ===");
+    Serial.println("=== Boiler Assistant v3.3.12 Boot ===");
 
     i2cbus_init();
 
@@ -284,22 +302,24 @@ void loop() {
     // Recovery is serviced separately even while regular I/O is quarantined.
     bool ioReady = wifi_prov_prepareIo();
     wifi_prov_networkLoop();
-    if (ioReady) wifi_prov_finishIo(ioStartedMs, "link monitor");
+    // Each bridge command is timed on its own; these whole-pass checks are
+    // a backstop so several slow-but-answered steps do not reset Wi-Fi.
+    if (ioReady) wifi_prov_finishIo(ioStartedMs, "link monitor", WIFI_PASS_LIMIT_MS);
     if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
         ioStartedMs = millis();
         wifiapi_loop();
-        wifi_prov_finishIo(ioStartedMs, "HTTP");
+        wifi_prov_finishIo(ioStartedMs, "HTTP", WIFI_PASS_LIMIT_MS);
     }
     if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
         ioStartedMs = millis();
         mqtt_loop();
-        wifi_prov_finishIo(ioStartedMs, "MQTT");
+        wifi_prov_finishIo(ioStartedMs, "MQTT", WIFI_PASS_LIMIT_MS);
     }
     if (!wifi_prov_isAPMode()) {
         ioStartedMs = millis();
         ioReady = wifi_prov_prepareIo();
         pushnotify_loop();
-        if (ioReady) wifi_prov_finishIo(ioStartedMs, "push");
+        if (ioReady) wifi_prov_finishIo(ioStartedMs, "push", WIFI_PASS_LIMIT_MS);
     }
     sys.networkLastMs = millis() - networkStartMs;
     if (sys.networkLastMs > sys.networkMaxMs) sys.networkMaxMs = sys.networkLastMs;

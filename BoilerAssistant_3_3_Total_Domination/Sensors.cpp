@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Sensor Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Sensor Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: Sensors.cpp
  *  Author: The Architect Collective
@@ -32,7 +32,7 @@
  *      - This module contains no UI, MQTT, or EEPROM logic
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -145,7 +145,7 @@ void scanWaterProbes() {
             millis() - scanStartMs >= 250UL) {
             sys.waterProbeCount = oldCount;
             oneWire.reset_search();
-            Serial.println("Water probes: scan budget exceeded; keeping previous addresses");
+            Serial.println("Probes: scan over budget; old addresses kept");
             return;
         }
         if (OneWire::crc8(addr, 7) != addr[7]) {
@@ -158,7 +158,7 @@ void scanWaterProbes() {
         }
         if (millis() - scanStartMs >= 250UL) {
             sys.waterProbeCount = oldCount;
-            Serial.println("Water probes: scan timed out; keeping previous addresses");
+            Serial.println("Probes: scan timeout; old addresses kept");
             return;
         }
     }
@@ -232,14 +232,14 @@ void sensors_readWaterProbes() {
 
 void sensors_readBME280() {
     if (!i2cbus_ready()) {
-        if (sys.envSensorOK) Serial.println("BME280: I2C unavailable; outdoor readings invalidated");
+        if (sys.envSensorOK) Serial.println("BME280: no I2C; outdoor readings invalid");
         invalidateBME();
         return;
     }
 
     if (!bme.ready()) return;
     if (!bme.measurementAvailable()) {
-        Serial.println("BME280: identity/configuration/sample check failed; readings cleared");
+        Serial.println("BME280: check failed; readings cleared");
         invalidateBME();
         bmeLastAttemptMs = millis();
         return;
@@ -255,7 +255,7 @@ void sensors_readBME280() {
                  !isnan(h) && h >= 0.0f && h <= 100.0f &&
                  bme.measurementAvailable();
     if (!valid) {
-        Serial.println("BME280: invalid measurement; scheduling reinitialization");
+        Serial.println("BME280: bad reading; reinit");
         invalidateBME();
         bmeLastAttemptMs = millis();
         return;
@@ -271,7 +271,7 @@ void sensors_loop() {
     if (!i2cbus_ready() || bmeBusGeneration != i2cbus_generation()) {
         bmeBusGeneration = i2cbus_generation();
         if (sys.envSensorOK || bme.pending()) {
-            Serial.println("BME280: shared bus reset; initialization cancelled");
+            Serial.println("BME280: bus reset; init cancelled");
             invalidateBME();
             bme.cancel();
             bmeLastAttemptMs = millis();
@@ -281,7 +281,7 @@ void sensors_loop() {
     if (bme.pending()) {
         BoundedBME280::InitState state = bme.poll();
         if (state == BoundedBME280::READY) {
-            Serial.println("BME280: startup verified; awaiting valid measurement");
+            Serial.println("BME280: OK; awaiting reading");
         } else if (state == BoundedBME280::FAILED) {
             invalidateBME();
             bmeLastAttemptMs = millis();

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - WiFi Provisioning Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - WiFi Provisioning Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: WiFiProvisioning.cpp
  *  Author: The Architect Collective
@@ -35,7 +35,7 @@
  *      - UI/telemetry use cached network data; control uses cached UTC
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -83,7 +83,7 @@ static unsigned long cachedUTC = 0;
 static unsigned long utcAnchorMs = 0;
 static unsigned long lastTimeAttemptMs = 0;
 static bool timeAttempted = false;
-static const unsigned long MODEM_RUNTIME_TIMEOUT_MS = 3000UL;
+static const unsigned long MODEM_RUNTIME_TIMEOUT_MS = WIFI_STEP_LIMIT_MS;
 enum BridgeRecovery { BRIDGE_NORMAL, BRIDGE_QUIET, BRIDGE_BOOT_WAIT,
                       BRIDGE_CLOSE_HTTP, BRIDGE_CLOSE_MQTT, BRIDGE_CLOSE_PUSH };
 static BridgeRecovery bridgeRecovery = BRIDGE_NORMAL;
@@ -118,9 +118,9 @@ bool wifi_prov_prepareClientIo() {
     return true;
 }
 
-void wifi_prov_finishIo(unsigned long startedMs, const char* source) {
+void wifi_prov_finishIo(unsigned long startedMs, const char* source, unsigned long limitMs) {
     if (ota_isActive() || bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT ||
-        millis() - startedMs < MODEM_RUNTIME_TIMEOUT_MS) return;
+        millis() - startedMs < limitMs) return;
     Serial.print("WiFi: modem slow: ");
     Serial.println(source);
     sys.wifiOK = false;
@@ -286,7 +286,7 @@ void wifi_prov_init() {
         return;
     }
 
-    Serial.println("WiFiProvisioning: No runtime credentials â†’ AP mode");
+    Serial.println("WiFi: no creds; AP mode");
     startAP();
 }
 
@@ -360,7 +360,10 @@ void wifi_prov_networkLoop() {
             if (!timeAttempted || now - lastTimeAttemptMs >= 60000UL) {
                 timeAttempted = true;
                 lastTimeAttemptMs = now;
+                operationMs = millis();
                 unsigned long utc = WiFi.getTime();
+                wifi_prov_finishIo(operationMs, "WiFi time");
+                if (bridgeRecovery != BRIDGE_NORMAL) return;
                 if (utc != 0) {
                     cachedUTC = utc;
                     utcAnchorMs = millis();
@@ -369,7 +372,10 @@ void wifi_prov_networkLoop() {
                 }
             } else if (now - lastRSSIMs >= 15000UL) {
                 lastRSSIMs = now;
-                cachedRSSI = WiFi.RSSI();
+                operationMs = millis();
+                int32_t rssi = WiFi.RSSI();
+                wifi_prov_finishIo(operationMs, "WiFi RSSI");
+                if (bridgeRecovery == BRIDGE_NORMAL) cachedRSSI = rssi;
             }
         }
         return;
@@ -378,7 +384,9 @@ void wifi_prov_networkLoop() {
     linkDetected = false;
     sys.wifiOK = false;
     if (now - lastJoinAttemptMs < joinRetryMs) return;
+    operationMs = millis();
     beginStationAttempt();
+    wifi_prov_finishIo(operationMs, "WiFi join");
     // A marginal network gets breathing room: 30s, 60s, then 120s.
     joinRetryMs = min(joinRetryMs * 2UL, 120000UL);
 }

@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - UI Module (v3.3.11 "Total Domination")
+ *  Boiler Assistant - UI Module (v3.3.12 "Total Domination")
  *  ------------------------------------------------------------
  *  File: UI.cpp
  *  Author: The Architect Collective
@@ -30,7 +30,7 @@
  *        except the boot sequence.
  *
  *  Version:
- *      Boiler Assistant v3.3.11 "Total Domination"
+ *      Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -195,13 +195,31 @@ static unsigned long lcdLastAttemptMs = 0;
 static unsigned long lcdLastHealthMs = 0;
 static uint32_t lcdBusGeneration = 0;
 static const uint8_t LCD_I2C_ADDRESS = 0x27;
+static const unsigned long LCD_SLEEP_MS = 5UL * 60UL * 1000UL;
+static const unsigned long LCD_REINIT_KEY_GAP_MS = 5000UL;
+static unsigned long lcdLastActivityMs = 0;
+static unsigned long lcdLastKeyMs = 0;
+static bool lcdBacklightOn = true;
+
+static bool lcdAlertActive() {
+    return sys.safetyState != SAFETY_OK || sys.emberGuardianLatched ||
+           sys.exhaustFallbackActive;
+}
 
 static void lcdInvalidate() {
     for (uint8_t i = 0; i < 4; ++i) lcdLineValid[i] = false;
 }
 
+// Rebuilds the LCD controller state and repaints every row. A missed
+// write can desynchronize the LCD while its backpack still ACKs.
+static void lcdRequestReinit() {
+    lcdOnline = false;
+    lcdAttempted = false;
+    lcdInvalidate();
+}
+
 static void lcdFailed() {
-    Serial.println("LCD: backpack not responding; scheduling reinitialization");
+    Serial.println("LCD: no ACK; reinit");
     lcdOnline = false;
     lcdLastAttemptMs = millis();
     lcdInvalidate();
@@ -230,7 +248,8 @@ static bool lcdEnsureReady() {
         // begin() calls Wire.begin(); restore the shared-bus configuration.
         Wire.setClock(100000);
         Wire.setWireTimeout(25000, false);
-        lcdRef->setBacklight(255);
+        lcdBacklightOn = lcdAlertActive() || now - lcdLastActivityMs < LCD_SLEEP_MS;
+        lcdRef->setBacklight(lcdBacklightOn ? 255 : 0);
         if (!lcdConnected()) {
             lcdFailed();
             return false;
@@ -238,7 +257,7 @@ static bool lcdEnsureReady() {
         lcdOnline = true;
         lcdBusGeneration = i2cbus_generation();
         lcdLastHealthMs = millis();
-        Serial.println("LCD: initialized; repainting current screen");
+        Serial.println("LCD: init; repaint");
     }
 
     if (now - lcdLastHealthMs >= 1000UL) {
@@ -248,6 +267,16 @@ static bool lcdEnsureReady() {
             lcdFailed();
             return false;
         }
+    }
+    if (lcdAlertActive()) lcdLastActivityMs = now;
+    bool backlight = now - lcdLastActivityMs < LCD_SLEEP_MS;
+    if (backlight != lcdBacklightOn) {
+        lcdRef->setBacklight(backlight ? 255 : 0);
+        if (!lcdConnected()) {
+            lcdFailed();
+            return false;
+        }
+        lcdBacklightOn = backlight;
     }
     return true;
 }
@@ -317,8 +346,7 @@ static void ui_showExhaustFallback()
     lcd4(
         "EXHAUST PROBE FAULT ",
         "CLEAN OR REPLACE    ",
-        sys.controlMode == RUNMODE_CONTINUOUS && !fan_dimmer_boilerCallReady() ?
-            "NO ZC - FAN OFF     " : "FAN AT MAX CLAMP    ",
+        "FAN AT MAX CLAMP    ",
         "PRESS * TO RESET    "
     );
 }
@@ -380,6 +408,8 @@ static void showBootScreen() {
 void ui_init() {
     static LiquidCrystal_PCF8574 lcd(LCD_I2C_ADDRESS);
     lcdRef = &lcd;
+    lcdLastActivityMs = millis();
+    lcdLastKeyMs = lcdLastActivityMs;
 
     if (lcdEnsureReady()) showBootScreen();
 
@@ -436,9 +466,7 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
         snprintf(l3, 21, "FAN:%3d%%    W/C:%03dF", fanPercent, tankF);
 
     switch (sys.burnState) {
-        case BURN_IDLE:        snprintf(l4, 21, sys.controlMode == RUNMODE_CONTINUOUS &&
-                                        !fan_dimmer_boilerCallReady() ?
-                                        "WAIT BOILER / NO ZC" : "IDLE          "); break;
+        case BURN_IDLE:        snprintf(l4, 21, "IDLE          "); break;
         case BURN_RAMP:        snprintf(l4, 21, "RAMPING UP    "); break;
         case BURN_HOLD:        snprintf(l4, 21, "IN THE ZONE!! "); break;
         case BURN_BOOST:       snprintf(l4, 21, "BOOSTING      "); break;
@@ -709,7 +737,7 @@ static void ui_showRunModeConfirmContinuous() {
     lcd4(
         "!!CONTINUOUS  MODE!!",
         "!IGNORES  TANK TEMP!",
-        "REQUIRES BOILER ZC ",
+        "!!NO AUTO SHUTDOWN!!",
         "   A:YES    B:NO    "
     );
 }
@@ -1103,7 +1131,16 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
 {
     if (!k) return;
 
+    unsigned long now = millis();
+    bool waking = !lcdAlertActive() && now - lcdLastActivityMs >= LCD_SLEEP_MS;
+    bool reinit = waking || now - lcdLastKeyMs >= LCD_REINIT_KEY_GAP_MS;
+    lcdLastActivityMs = now;
+    lcdLastKeyMs = now;
+    if (reinit) lcdRequestReinit();
+    lcdEnsureReady();
     uiNeedRedraw = true;
+    // The waking press only turns the screen on; it is not acted on blind.
+    if (waking) return;
 
     /* GLOBAL EMBER GUARDIAN RESET HANDLER */
     if (sys.emberGuardianLatched) {
@@ -1499,6 +1536,7 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
                 case 'A':
                     sys.controlMode = RUNMODE_CONTINUOUS;
                     eeprom_saveRunMode(RUNMODE_CONTINUOUS);
+                    burnengine_startBoost();
                     uiState = UI_RUNMODE;
                     uiNeedRedraw = true;
                     break;

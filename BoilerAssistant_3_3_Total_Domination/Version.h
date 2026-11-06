@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Boiler Assistant - Release Identity (v3.3.11 "Total Domination")
+ *  Boiler Assistant - Release Identity (v3.3.12 "Total Domination")
  *  File: Version.h
  *  Maintainer: Karl (Embedded Systems Architect)
  *  License: CC BY-NC-SA 4.0
@@ -9,7 +9,7 @@
  *    Firmware release string used by OTA version comparisons.
  *    Update FW_VERSION when preparing a new release.
  *
- *  Version: Boiler Assistant v3.3.11 "Total Domination"
+ *  Version: Boiler Assistant v3.3.12 "Total Domination"
  * ============================================================
  */
 
@@ -17,6 +17,6 @@
 #define VERSION_H
 
 // Bump this for every release; OTA compares it against firmware-releases/version.txt on GitHub.
-#define FW_VERSION "3.3.11"
+#define FW_VERSION "3.3.12"
 
 #endif // VERSION_H
