@@ -1,33 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - System Data Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: SystemData.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Defines the global SystemData instance and provides helper
- *    accessors used by the UI and seasonal logic. This module
- *    also initializes all system defaults under the Total
- *    Domination Architecture (TDA), ensuring deterministic,
- *    operator-visible startup behavior.
- *
- *    Responsibilities:
- *      - Own the global SystemData sys instance
- *      - Provide UI pointer helpers for seasonal parameters
- *      - Initialize all system defaults (tank, fan, exhaust,
- *        seasonal thresholds, Guardian, environmental sensors)
- *
- *    Architectural Notes:
- *      - SystemData is the single source of truth for all modules
- *      - No control logic, UI logic, or EEPROM logic belongs here
- *      - All fields are explicitly initialized for deterministic boot
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - SystemData
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "SystemData.h"
@@ -136,6 +111,10 @@ void systemdata_init()
     sys.boostActive      = false;
     sys.boostStartMs     = 0;
     sys.boostTimeSeconds = 90;
+    sys.boostFanPercent = sys.clampMaxPercent;
+    sys.activeBoostFanPercent = 0;
+    sys.damperDelaySeconds = 5;
+    sys.damperDelayActive = false;
 
     /* SAFETY */
     sys.safetyState = SAFETY_OK;
@@ -180,7 +159,10 @@ void systemdata_init()
     sys.envSetpointWinterF      = 500;
     sys.envSetpointExtremeF     = 525;
 
-    /* 6-PARAMETER SEASONAL SYSTEM */
+    for (uint8_t i = 0; i < 4; ++i) sys.envBoostTimeSeconds[i] = sys.boostTimeSeconds;
+    for (uint8_t i = 0; i < 4; ++i) sys.envDamperDelaySeconds[i] = sys.damperDelaySeconds;
+
+    /* SEASONAL PROFILES */
     sys.envTankHighSummerF        = 170;
     sys.envTankLowSummerF         = 150;
     sys.envClampMaxSummerPercent  = 40;
@@ -196,6 +178,8 @@ void systemdata_init()
     sys.envTankHighExtremeF        = 185;
     sys.envTankLowExtremeF         = 165;
     sys.envClampMaxExtremePercent  = 70;
+    for (uint8_t i = 0; i < 4; ++i)
+        sys.envBoostFanPercent[i] = *ui_getSeasonClampMaxPtr(static_cast<EnvSeason>(i));
 
     /* AUTO-SEASON */
     sys.envAutoSeasonEnabled = false;
@@ -225,22 +209,8 @@ void systemdata_init()
     sys.fanFinal      = 0;
     sys.remoteChanged = false;
 
-    for (uint8_t i = 0; i < BURN_HISTORY_COUNT; i++) {
-        sys.burnHistoryDurationSec[i] = 0;
-        sys.burnHistoryIntervalSec[i] = 0;
-        sys.burnHistoryStartElapsedMin[i] = 0;
-        sys.burnHistoryWaterTempF[i] = -1;
-    }
-    sys.burnHistoryCount  = 0;
     sys.burnActiveStartMs = 0;
     sys.burnLastStartMs   = 0;
-    for (uint16_t i = 0; i < WATER_HISTORY_COUNT; i++) {
-        sys.waterHistoryF[i] = -1;
-        sys.waterHistoryElapsedMin[i] = 0;
-    }
-    sys.waterHistoryCount = 0;
-    sys.waterHistoryNext = 0;
-    sys.waterHistoryLastSampleMs = 0;
 
     /* UPTIME */
     sys.uptimeMs = 0;
@@ -267,27 +237,4 @@ void systemdata_init()
  
     /* UI */
     sys.uiNeedsRefresh = true;
-}
-
-void systemdata_recordWaterHistory(unsigned long now)
-{
-    if (sys.waterHistoryLastSampleMs != 0 &&
-        now - sys.waterHistoryLastSampleMs < WATER_HISTORY_INTERVAL_MS) {
-        return;
-    }
-
-    sys.waterHistoryLastSampleMs = now;
-    int16_t sample = -1;
-    if (sys.waterProbeCount > 0) {
-        uint8_t tankProbe = sys.probeRoleMap[PROBE_TANK];
-        if (tankProbe < sys.waterProbeCount &&
-            !isnan(sys.waterTempF[tankProbe])) {
-            sample = (int16_t)(sys.waterTempF[tankProbe] + 0.5f);
-        }
-    }
-
-    sys.waterHistoryF[sys.waterHistoryNext] = sample;
-    sys.waterHistoryElapsedMin[sys.waterHistoryNext] = now / 60000UL;
-    sys.waterHistoryNext = (sys.waterHistoryNext + 1) % WATER_HISTORY_COUNT;
-    if (sys.waterHistoryCount < WATER_HISTORY_COUNT) sys.waterHistoryCount++;
 }

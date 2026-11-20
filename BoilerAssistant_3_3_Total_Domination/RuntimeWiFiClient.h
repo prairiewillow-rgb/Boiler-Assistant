@@ -1,19 +1,7 @@
 /*
- * ============================================================
- *  Boiler Assistant - Guarded WiFi Transport (v3.3.12 "Total Domination")
- *  File: RuntimeWiFiClient.h
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    TCP/TLS wrapper for HTTP, MQTT and push clients. Gates and
- *    measures transport through provisioning recovery APIs.
- *    Quarantine invalidates local socket ownership without
- *    sending close commands into an unresponsive bridge.
- *    Underlying WiFiS3 operations remain synchronous.
- *
- *  Version: Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - RuntimeWiFiClient
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef RUNTIME_WIFI_CLIENT_H
@@ -44,7 +32,8 @@ public:
     }
     size_t write(uint8_t byte) override { return write(&byte, 1); }
     size_t write(const uint8_t* buffer, size_t length) override {
-        return perform<size_t>(0, [&]() { return Base::write(buffer, length); });
+        return perform<size_t>(0, [&]() { return Base::write(buffer, length); },
+                               WIFI_SEND_LIMIT_MS);
     }
     int available() override {
         return perform<int>(0, [&]() { return Base::available(); });
@@ -90,14 +79,17 @@ private:
     }
 
     template <class Result, class Action>
-    Result perform(Result failure, Action action) {
-        if (!wifi_prov_prepareClientIo()) {
+    Result perform(Result failure, Action action,
+                   unsigned long limitMs = WIFI_STEP_LIMIT_MS) {
+        if (!wifi_prov_prepareClientIo(limitMs)) {
             forgetSocket();
             return failure;
         }
         unsigned long start = millis();
         Result result = action();
-        wifi_prov_finishIo(start, "client transport");
+        wifi_prov_finishIo(start, limitMs == WIFI_STEP_LIMIT_MS
+                                      ? "client transport" : "client send",
+                           limitMs);
         if (!wifi_prov_prepareClientIo()) {
             // Base::connected() checks _sock after virtual available();
             // invalidate it now so it cannot send a second AT command.

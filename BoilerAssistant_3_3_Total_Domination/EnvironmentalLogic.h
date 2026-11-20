@@ -1,23 +1,7 @@
 /*
- * ============================================================
- *  Boiler Assistant - Environmental Logic (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: EnvironmentalLogic.h
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *      Public interface and shared types for the environmental
- *      / seasonal logic subsystem.
- *
- *      v3.3 extends the active environment state to drive:
- *          - Exhaust setpoint (per season)
- *          - Max fan clamp (per season)
- *          - Tank HIGH / LOW water setpoints (per season)
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - EnvironmentalLogic
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef ENVIRONMENTALLOGIC_H

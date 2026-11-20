@@ -1,19 +1,7 @@
 /*
- * ============================================================
- *  Boiler Assistant - Configuration Validation (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: ConfigValidation.h
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Shared inclusive range checks for exhaust, tank, fan,
- *    seasonal, Guardian and self-clean settings. These helpers
- *    validate individual values without modifying configuration.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - ConfigValidation
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef CONFIG_VALIDATION_H
@@ -27,12 +15,20 @@ inline bool validBoostTime(int value) {
     return value >= 0 && value <= 600;
 }
 
+inline bool validDamperDelay(int value) {
+    return value >= 0 && value <= 300;
+}
+
 inline bool validDeadband(int value) {
     return value >= 1 && value <= 100;
 }
 
 inline bool validFanClamp(int value) {
     return value >= 0 && value <= 100;
+}
+
+inline bool validBoostFan(int value, int minimum, int maximum) {
+    return validFanClamp(value) && value >= minimum && value <= maximum;
 }
 
 inline bool validGuardianMinutes(int value) {

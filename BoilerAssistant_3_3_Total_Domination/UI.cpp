@@ -1,40 +1,12 @@
 /*
- * ============================================================
- *  Boiler Assistant - UI Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: UI.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Full keypad-driven LCD UI subsystem for the Boiler Assistant.
- *    Implements deterministic operator interaction for:
- *      - Home screen
- *      - Combustion menus
- *      - Tank setpoints
- *      - Environmental seasonal system
- *      - Probe role assignment
- *      - Networking & provisioning
- *      - Safety lockouts and Guardian logic
- *
- *    Architectural Notes:
- *      - No control logic lives here - UI only.
- *      - All state is read/written through SystemData (sys.*).
- *      - All EEPROM writes are delegated to EEPROMStorage.
- *      - LiquidCrystal_PCF8574 restores the v3.3.8 row-write sequence.
- *      - Backpack connection checks and bus recovery invalidate the
- *        render cache; individual LCD commands cannot be verified.
- *      - Network Info uses cached IP/RSSI, not live modem queries.
- *      - Rendering is strictly 20x4 LCD, deterministic, no animations
- *        except the boot sequence.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - UI
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "UI.h"
+#include "DebugLog.h"
 #include "SystemState.h"
 #include "SystemData.h"
 #include "EEPROMStorage.h"
@@ -68,6 +40,7 @@
  * ============================================================ */
 
 extern void eeprom_saveProbeRoles();
+extern bool sensors_setTankProbe(uint8_t index);
 extern RuntimeCredentials runtimeCreds;
 
 // combustion EEPROM hooks
@@ -104,6 +77,7 @@ extern UIState uiState;
 // BurnEngine hook
 extern void burnengine_startBoost();
 extern void burnengine_resetSensorFault();
+extern bool burnengine_guardianPaused();
 
 /* ============================================================
  *  EDIT BUFFERS
@@ -119,49 +93,6 @@ extern String flueRecEditValue;
 
 static String tankLowEditValue;
 static String tankHighEditValue;
-
-static EnvSeason uiEditSeason = ENV_SEASON_SUMMER;
-static String envSeasonEditValue;
-static String envSetpointEditValue;
-static String envLockoutEditValue;
-
-/* ============================================================
- *  ENVIRONMENTAL UI SUPPORT
- * ============================================================ */
-static const char* envSeasonLongName(EnvSeason s) {
-    switch (s) {
-        case ENV_SEASON_SUMMER:      return "SUMMER SETTINGS   ";
-        case ENV_SEASON_SPRING_FALL: return "SPRING/FALL SET   ";
-        case ENV_SEASON_WINTER:      return "WINTER SETTINGS   ";
-        case ENV_SEASON_EXTREME:     return "EXTREME COLD SET  ";
-        default:                     return "UNKNOWN SEASON    ";
-    }
-}
-
-
-
-/* ============================================================
- *  OUTDOOR UNIT CONVERSION (storage stays in F)
- * ============================================================ */
-static char envUnitChar() {
-    return sys.envUnitsMetric ? 'C' : 'F';
-}
-
-static int envTempToDisplay(int16_t f) {
-    return sys.envUnitsMetric ? (int)lround((f - 32) * 5.0 / 9.0) : f;
-}
-
-static int16_t envTempFromDisplay(int v) {
-    return sys.envUnitsMetric ? (int16_t)lround(v * 9.0 / 5.0 + 32.0) : (int16_t)v;
-}
-
-static int envDeltaToDisplay(int16_t f) {
-    return sys.envUnitsMetric ? (int)lround(f * 5.0 / 9.0) : f;
-}
-
-static int16_t envDeltaFromDisplay(int v) {
-    return sys.envUnitsMetric ? (int16_t)lround(v * 9.0 / 5.0) : (int16_t)v;
-}
 
 /* ============================================================
  *  PROBE ROLE NAMES
@@ -196,9 +127,7 @@ static unsigned long lcdLastHealthMs = 0;
 static uint32_t lcdBusGeneration = 0;
 static const uint8_t LCD_I2C_ADDRESS = 0x27;
 static const unsigned long LCD_SLEEP_MS = 5UL * 60UL * 1000UL;
-static const unsigned long LCD_REINIT_KEY_GAP_MS = 5000UL;
 static unsigned long lcdLastActivityMs = 0;
-static unsigned long lcdLastKeyMs = 0;
 static bool lcdBacklightOn = true;
 
 static bool lcdAlertActive() {
@@ -210,16 +139,8 @@ static void lcdInvalidate() {
     for (uint8_t i = 0; i < 4; ++i) lcdLineValid[i] = false;
 }
 
-// Rebuilds the LCD controller state and repaints every row. A missed
-// write can desynchronize the LCD while its backpack still ACKs.
-static void lcdRequestReinit() {
-    lcdOnline = false;
-    lcdAttempted = false;
-    lcdInvalidate();
-}
-
 static void lcdFailed() {
-    Serial.println("LCD: no ACK; reinit");
+    DBG_PRINTLN("LCD: no ACK; reinit");
     lcdOnline = false;
     lcdLastAttemptMs = millis();
     lcdInvalidate();
@@ -257,7 +178,7 @@ static bool lcdEnsureReady() {
         lcdOnline = true;
         lcdBusGeneration = i2cbus_generation();
         lcdLastHealthMs = millis();
-        Serial.println("LCD: init; repaint");
+        DBG_PRINTLN("LCD: init");
     }
 
     if (now - lcdLastHealthMs >= 1000UL) {
@@ -409,7 +330,6 @@ void ui_init() {
     static LiquidCrystal_PCF8574 lcd(LCD_I2C_ADDRESS);
     lcdRef = &lcd;
     lcdLastActivityMs = millis();
-    lcdLastKeyMs = lcdLastActivityMs;
 
     if (lcdEnsureReady()) showBootScreen();
 
@@ -461,7 +381,7 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
                  (int)(dispF + 0.5), sys.tankLowSetpointF);
 
     if (sys.burnState == BURN_IDLE || fanPercent <= 0)
-        snprintf(l3, 21, "FAN:OFF     W/C:%03dF", tankF);
+        snprintf(l3, 21, "FAN:  0%%    W/C:%03dF", tankF);
     else
         snprintf(l3, 21, "FAN:%3d%%    W/C:%03dF", fanPercent, tankF);
 
@@ -469,7 +389,7 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
         case BURN_IDLE:        snprintf(l4, 21, "IDLE          "); break;
         case BURN_RAMP:        snprintf(l4, 21, "RAMPING UP    "); break;
         case BURN_HOLD:        snprintf(l4, 21, "IN THE ZONE!! "); break;
-        case BURN_BOOST:       snprintf(l4, 21, "BOOSTING      "); break;
+        case BURN_BOOST:       snprintf(l4, 21, sys.damperDelayActive ? "DAMPER DELAY  " : "BOOSTING      "); break;
         case BURN_EMBER_GUARD: snprintf(l4, 21, "EMBER GUARD   "); break;
         default:               snprintf(l4, 21, "UNKNOWN       "); break;
     }
@@ -491,7 +411,8 @@ static void ui_showHome(double exhaustF_unused, int fanPercent) {
         int remMin = (int)(remSec / 60UL);
         int remSecOnly = (int)(remSec % 60UL);
 
-        snprintf(l4, 21, "EMBER GUARD %2d:%02d", remMin, remSecOnly);
+        snprintf(l4, 21, burnengine_guardianPaused() ? "EMBER PAUSE %2d:%02d" :
+                 "EMBER GUARD %2d:%02d", remMin, remSecOnly);
     }
 
     lcd4(l1, l2, l3, l4);
@@ -743,183 +664,17 @@ static void ui_showRunModeConfirmContinuous() {
 }
 
 /* ============================================================
- *  ENVIRONMENT MENU
+ *  SEASONAL STATUS (read only; seasonal settings are edited
+ *  in the dashboard Settings > Seasonal tab)
  * ============================================================ */
 static void ui_showEnvMenu() {
-    lcd4(
-        "ENVIRONMENT       ",
-        "1: SEASONS         ",
-        "2: LOCKOUT/MODE    ",
-        "*=BACK             "
-    );
-}
-
-static void ui_showSeasonsMenu() {
-    lcd4(
-        "1: SUMMER          ",
-        "2: SPRING/FALL     ",
-        "3: WINTER          ",
-        "4: EXTREME         "
-    );
-}
-
-static void ui_showSeasonsMenuLine4() {
-    lcd4(
-        "SEASONS           ",
-        "1: SUMMER          ",
-        "2: SPRING/FALL     ",
-        "3: WINTER          "
-    );
-}
-
-static void ui_showSeasonDetailMenu() {
-    lcd4(
-        envSeasonLongName(uiEditSeason),
-        "1: START TEMP      ",
-        "2: HYSTERESIS      ",
-        "3: EXHAUST SETPT   "
-    );
-}
-
-static void ui_showSeasonDetailMenu2() {
-    lcd4(
-        envSeasonLongName(uiEditSeason),
-        "4: TANK HIGH       ",
-        "5: TANK LOW        ",
-        "6: MAX CLAMP       "
-    );
-}
-
-static void ui_showSeasonEditStart() {
+    static const char* const seasonNames[] = {"SUMMER", "SPRING/FALL", "WINTER", "EXTREME COLD"};
+    static const char* const modeNames[] = {"OFF", "USER", "AUTO"};
     char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3d%c",
-             envTempToDisplay(*ui_getSeasonStartPtr(uiEditSeason)), envUnitChar());
-    snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
-
-    lcd4(
-        "EDIT START TEMP   ",
-        l2, l3,
-        "A=+/- *=BACK #=SAVE"
-    );
-}
-
-static void ui_showSeasonEditBuffer() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3d%c",
-             envDeltaToDisplay(*ui_getSeasonBufferPtr(uiEditSeason)), envUnitChar());
-    snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
-
-    lcd4(
-        "EDIT HYSTERESIS   ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-    );
-}
-
-static void ui_showSeasonEditSetpoint() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3dF", *ui_getSeasonSetpointPtr(uiEditSeason));
-    snprintf(l3, 21, "NEW: %s", envSetpointEditValue.c_str());
-
-    lcd4(
-        "EDIT EXH SETPOINT ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-
-    );
-}
-
-static void ui_showSeasonEditTankHigh() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3dF", *ui_getSeasonTankHighPtr(uiEditSeason));
-    snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
-
-    lcd4(
-        "EDIT TANK HIGH    ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-    );
-}
-
-static void ui_showSeasonEditTankLow() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3dF", *ui_getSeasonTankLowPtr(uiEditSeason));
-    snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
-
-    lcd4(
-        "EDIT TANK LOW     ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-    );
-}
-
-static void ui_showSeasonEditClampMax() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %3d%%", (int)*ui_getSeasonClampMaxPtr(uiEditSeason));
-    snprintf(l3, 21, "NEW: %s", envSeasonEditValue.c_str());
-
-    lcd4(
-        "EDIT MAX CLAMP    ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-    );
-}
-
-/* ============================================================
- *  LOCKOUT / MODE
- * ============================================================ */
-static void ui_showEnvLockoutMenu() {
-    lcd4(
-        "LOCKOUT / MODE    ",
-        "1: MODE            ",
-        "2: AUTO-SEASON     ",
-        "3: LOCKOUT HOURS   "
-    );
-}
-
-static void ui_showEnvMode() {
-    char l2[21], l3[21], l4[21];
-
-    snprintf(l2, 21, "1: OFF%s",
-             (sys.envSeasonMode == 0 ? "   <-" : ""));
-
-    snprintf(l3, 21, "2: USER%s",
-             (sys.envSeasonMode == 1 ? "  <-" : ""));
-
-    snprintf(l4, 21, "3: AUTO%s",
-             (sys.envSeasonMode == 2 ? "  <-" : ""));
-
-    lcd4(
-        "ENVIRONMENT MODE",
-        l2, l3, l4
-    );
-}
-
-
-static void ui_showEnvAutoSeason() {
-    char l2[21];
-    snprintf(l2, 21, "CURRENT: %s",
-             sys.envAutoSeasonEnabled ? "ON " : "OFF");
-
-    lcd4(
-        "AUTO-SEASON       ",
-        l2,
-        "*=BACK             ",
-        "#=TOGGLE           "
-    );
-}
-
-static void ui_showEnvLockoutHours() {
-    char l2[21], l3[21];
-    snprintf(l2, 21, "CURRENT: %2lu",
-             (unsigned long)(sys.envModeLockoutSec / 3600UL));
-    snprintf(l3, 21, "NEW: %s", envLockoutEditValue.c_str());
-
-    lcd4(
-        "LOCKOUT HOURS     ",
-        l2, l3,
-        "*=BACK   #=SAVE    "
-    );
+    uint8_t season = static_cast<uint8_t>(sys.envActiveSeason);
+    snprintf(l2, 21, "MODE: %s", sys.envSeasonMode < 3 ? modeNames[sys.envSeasonMode] : "?");
+    snprintf(l3, 21, "ACTIVE: %s", season < 4 ? seasonNames[season] : "NONE");
+    lcd4("SEASONAL STATUS", l2, l3, "EDIT IN DASHBOARD  *");
 }
 
 /* ============================================================
@@ -1131,15 +886,11 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
 {
     if (!k) return;
 
-    unsigned long now = millis();
-    bool waking = !lcdAlertActive() && now - lcdLastActivityMs >= LCD_SLEEP_MS;
-    bool reinit = waking || now - lcdLastKeyMs >= LCD_REINIT_KEY_GAP_MS;
-    lcdLastActivityMs = now;
-    lcdLastKeyMs = now;
-    if (reinit) lcdRequestReinit();
+    bool waking = !lcdAlertActive() &&
+                  millis() - lcdLastActivityMs >= LCD_SLEEP_MS;
+    lcdLastActivityMs = millis();
     lcdEnsureReady();
     uiNeedRedraw = true;
-    // The waking press only turns the screen on; it is not acted on blind.
     if (waking) return;
 
     /* GLOBAL EMBER GUARDIAN RESET HANDLER */
@@ -1536,7 +1287,6 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
                 case 'A':
                     sys.controlMode = RUNMODE_CONTINUOUS;
                     eeprom_saveRunMode(RUNMODE_CONTINUOUS);
-                    burnengine_startBoost();
                     uiState = UI_RUNMODE;
                     uiNeedRedraw = true;
                     break;
@@ -1600,306 +1350,9 @@ void ui_handleKey(char k, double exhaustF, int fanPercent)
             }
             break;
 
-        /* ENVIRONMENT MENU */
+        /* SEASONAL STATUS (read only; edit in the dashboard) */
         case UI_ENV_MENU:
-            switch (k) {
-                case '1': uiState = UI_SEASONS_MENU; break;
-                case '2': uiState = UI_ENV_LOCKOUT;  break;
-                case '*':
-                case '#':
-                    uiState = UI_HOME;
-                    break;
-            }
-            break;
-
-        /* SEASONS MENU */
-        case UI_SEASONS_MENU:
-            switch (k) {
-                case '1': uiEditSeason = ENV_SEASON_SUMMER;      uiState = UI_SEASON_DETAIL_MENU; break;
-                case '2': uiEditSeason = ENV_SEASON_SPRING_FALL; uiState = UI_SEASON_DETAIL_MENU; break;
-                case '3': uiEditSeason = ENV_SEASON_WINTER;      uiState = UI_SEASON_DETAIL_MENU; break;
-                case '4': uiEditSeason = ENV_SEASON_EXTREME;     uiState = UI_SEASON_DETAIL_MENU; break;
-
-                case '*':
-                case '#':
-                    uiState = UI_ENV_MENU;
-                    break;
-            }
-            break;
-
-/* ============================================================
- *  SEASON DETAIL MENU (PAGE 1)
- * ============================================================ */
-case UI_SEASON_DETAIL_MENU:
-    switch (k) {
-
-        case '1':     // Edit season start temperature
-            envSeasonEditValue = "";
-            uiState = UI_SEASON_EDIT_START;
-            break;
-
-        case '2':     // Edit hysteresis buffer
-            envSeasonEditValue = "";
-            uiState = UI_SEASON_EDIT_BUFFER;
-            break;
-
-        case '3':     // Edit exhaust setpoint
-            envSetpointEditValue = "";
-            uiState = UI_SEASON_EDIT_SETPOINT;
-            break;
-
-        case '#':     // Go to PAGE 2
-            uiState = UI_SEASON_DETAIL_MENU_2;
-            break;
-
-        case '*':     // Back to seasons list
-            uiState = UI_SEASONS_MENU;
-            break;
-    }
-    break;
-
-/* ============================================================
- *  SEASON DETAIL MENU (PAGE 2)
- * ============================================================ */
-case UI_SEASON_DETAIL_MENU_2:
-    switch (k) {
-
-        case '4':     // Edit Tank HIGH
-            envSeasonEditValue = "";
-            uiState = UI_SEASON_EDIT_TANKHIGH;
-            break;
-
-        case '5':     // Edit Tank LOW
-            envSeasonEditValue = "";
-            uiState = UI_SEASON_EDIT_TANKLOW;
-            break;
-
-        case '6':     // Edit ClampMax
-            envSeasonEditValue = "";
-            uiState = UI_SEASON_EDIT_CLAMPMAX;
-            break;
-
-        case '*':     // Back to PAGE 1
-            uiState = UI_SEASON_DETAIL_MENU;
-            break;
-    }
-    break;
-
-/* ============================================================
- *  SEASON START TEMP EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_START:
-    if (k >= '0' && k <= '9') {
-        envSeasonEditValue += k;
-    }
-    else if (k == 'A') {
-        if (envSeasonEditValue.startsWith("-")) envSeasonEditValue.remove(0, 1);
-        else envSeasonEditValue = "-" + envSeasonEditValue;
-    }
-    else if (k == '#') {
-        if (envSeasonEditValue.length() && envSeasonEditValue != "-") {
-            int v = envSeasonEditValue.toInt();
-            *ui_getSeasonStartPtr(uiEditSeason) = envTempFromDisplay(v);
-            eeprom_saveEnvSeasonStarts();
-        }
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    else if (k == '*') {
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    break;
-
-/* ============================================================
- *  SEASON HYSTERESIS EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_BUFFER:
-    if (k >= '0' && k <= '9') {
-        envSeasonEditValue += k;
-    }
-    else if (k == '#') {
-        if (envSeasonEditValue.length()) {
-            int v = envSeasonEditValue.toInt();
-            *ui_getSeasonBufferPtr(uiEditSeason) = envDeltaFromDisplay(v);
-            eeprom_saveEnvSeasonHyst();
-        }
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    else if (k == '*') {
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    break;
-
-/* ============================================================
- *  SEASON EXHAUST SETPOINT EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_SETPOINT:
-    if (k >= '0' && k <= '9') {
-        envSetpointEditValue += k;
-    }
-    else if (k == '#') {
-        if (envSetpointEditValue.length()) {
-            int v = envSetpointEditValue.toInt();
-            *ui_getSeasonSetpointPtr(uiEditSeason) = v;
-            eeprom_saveEnvSeasonSetpoints();
-        }
-        envSetpointEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    else if (k == '*') {
-        envSetpointEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU;
-    }
-    break;
-
-/* ============================================================
- *  SEASON TANK HIGH EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_TANKHIGH:
-    if (k >= '0' && k <= '9') {
-        envSeasonEditValue += k;
-    }
-    else if (k == '#') {
-        if (envSeasonEditValue.length()) {
-            int v = envSeasonEditValue.toInt();
-            *ui_getSeasonTankHighPtr(uiEditSeason) = v;
-            eeprom_saveEnvSeasonTankValues();
-        }
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    else if (k == '*') {
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    break;
-
-/* ============================================================
- *  SEASON TANK LOW EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_TANKLOW:
-    if (k >= '0' && k <= '9') {
-        envSeasonEditValue += k;
-    }
-    else if (k == '#') {
-        if (envSeasonEditValue.length()) {
-            int v = envSeasonEditValue.toInt();
-            *ui_getSeasonTankLowPtr(uiEditSeason) = v;
-            eeprom_saveEnvSeasonTankValues();
-        }
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    else if (k == '*') {
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    break;
-
-/* ============================================================
- *  SEASON CLAMPMAX EDIT
- * ============================================================ */
-case UI_SEASON_EDIT_CLAMPMAX:
-    if (k >= '0' && k <= '9') {
-        envSeasonEditValue += k;
-    }
-    else if (k == '#') {
-        if (envSeasonEditValue.length()) {
-            int v = envSeasonEditValue.toInt();
-            if (v < 0) v = 0;
-            if (v > 100) v = 100;
-            *ui_getSeasonClampMaxPtr(uiEditSeason) = (uint8_t)v;
-            eeprom_saveEnvSeasonClampValues();
-        }
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    else if (k == '*') {
-        envSeasonEditValue = "";
-        uiState = UI_SEASON_DETAIL_MENU_2;
-    }
-    break;
-
-
-        /* LOCKOUT / MODE */
-        case UI_ENV_LOCKOUT:
-            switch (k) {
-                case '1': uiState = UI_ENV_MODE;          break;
-                case '2': uiState = UI_ENV_AUTOSEASON;    break;
-                case '3':
-                    envLockoutEditValue = "";
-                    uiState = UI_ENV_LOCKOUT_HOURS;
-                    break;
-
-                case '*':
-                case '#':
-                    uiState = UI_ENV_MENU;
-                    break;
-            }
-            break;
-
-        /* ENV MODE */
-        case UI_ENV_MODE:
-            switch (k) {
-                case '1':
-                    sys.envSeasonMode = 0;
-                    eeprom_saveEnvSeasonMode(sys.envSeasonMode);
-                    break;
-
-                case '2':
-                    sys.envSeasonMode = 1;
-                    eeprom_saveEnvSeasonMode(sys.envSeasonMode);
-                    break;
-
-                case '3':
-                    sys.envSeasonMode = 2;
-                    eeprom_saveEnvSeasonMode(sys.envSeasonMode);
-                    break;
-
-                case '*':
-                case '#':
-                    uiState = UI_ENV_LOCKOUT;
-                    break;
-            }
-            break;
-
-        /* AUTO-SEASON */
-        case UI_ENV_AUTOSEASON:
-            switch (k) {
-                case '*':
-                    uiState = UI_ENV_LOCKOUT;
-                    break;
-
-                case '#':
-                    sys.envAutoSeasonEnabled = !sys.envAutoSeasonEnabled;
-                    eeprom_saveEnvAutoSeason(sys.envAutoSeasonEnabled);
-                    break;
-            }
-            break;
-
-        /* LOCKOUT HOURS EDIT */
-        case UI_ENV_LOCKOUT_HOURS:
-            if (k >= '0' && k <= '9') {
-                envLockoutEditValue += k;
-            }
-            else if (k == '#') {
-                if (envLockoutEditValue.length()) {
-                    int v = envLockoutEditValue.toInt();
-                    if (v < 0) v = 0;
-                    if (v > 99) v = 99;
-                    sys.envModeLockoutSec = (uint32_t)v * 3600UL;
-                    eeprom_saveEnvLockoutHours((uint8_t)v);
-                }
-                envLockoutEditValue = "";
-                uiState = UI_ENV_LOCKOUT;
-            }
-            else if (k == '*') {
-                envLockoutEditValue = "";
-                uiState = UI_ENV_LOCKOUT;
-            }
+            if (k == '*' || k == '#') uiState = UI_HOME;
             break;
 
         /* SENSORS & NETWORK */
@@ -1948,8 +1401,12 @@ case UI_SEASON_EDIT_CLAMPMAX:
                     break;
 
                 case '#':
-                    sys.probeRoleMap[selectedRole] = selectedPhys;
-                    eeprom_saveProbeRoles();
+                    if (selectedRole == PROBE_TANK) {
+                        sensors_setTankProbe(selectedPhys);
+                    } else {
+                        sys.probeRoleMap[selectedRole] = selectedPhys;
+                        eeprom_saveProbeRoles();
+                    }
                     break;
 
                 case '*':
@@ -2086,21 +1543,8 @@ void ui_showScreen(UIState st, double exhaustF, int fanPercent)
             ui_showRunModeConfirmContinuous();
             break;
 
-        /* ENVIRONMENT */
+        /* SEASONAL STATUS */
         case UI_ENV_MENU:               ui_showEnvMenu(); break;
-        case UI_SEASONS_MENU:           ui_showSeasonsMenu(); break;
-        case UI_SEASON_DETAIL_MENU:     ui_showSeasonDetailMenu(); break;
-        case UI_SEASON_DETAIL_MENU_2:   ui_showSeasonDetailMenu2(); break;
-        case UI_SEASON_EDIT_START:      ui_showSeasonEditStart(); break;
-        case UI_SEASON_EDIT_BUFFER:     ui_showSeasonEditBuffer(); break;
-        case UI_SEASON_EDIT_SETPOINT:   ui_showSeasonEditSetpoint(); break;
-        case UI_SEASON_EDIT_TANKHIGH:   ui_showSeasonEditTankHigh(); break;
-        case UI_SEASON_EDIT_TANKLOW:    ui_showSeasonEditTankLow(); break;
-        case UI_SEASON_EDIT_CLAMPMAX:   ui_showSeasonEditClampMax(); break;
-        case UI_ENV_LOCKOUT:            ui_showEnvLockoutMenu(); break;
-        case UI_ENV_MODE:               ui_showEnvMode(); break;
-        case UI_ENV_AUTOSEASON:         ui_showEnvAutoSeason(); break;
-        case UI_ENV_LOCKOUT_HOURS:      ui_showEnvLockoutHours(); break;
 
         /* SENSORS & NETWORK */
         case UI_SENSORS_MENU:                   ui_showSensorsMenu(); break;

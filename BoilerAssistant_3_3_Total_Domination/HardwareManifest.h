@@ -1,27 +1,11 @@
 /*
- * ============================================================
- *  Boiler Assistant - Master Hardware Parts List (v3.3.12)
- *  ------------------------------------------------------------
- *  File: HardwareManifest.h (reference documentation)
- *  Author: The Architect Collective
- *  License: CC BY-NC-SA 4.0
+ * Boiler Assistant - HardwareManifest
+ * Author: The Architect Collective
+ * License: CC BY-NC-SA 4.0
  *
- *  Description:
- *    Complete reference list of all hardware components used
- *    in the Boiler Assistant system, including main controller,
- *    pinout board, sensors, thermocouples, relays, keypad,
- *    LCD module, wiring, and optional future expansion parts.
- *
- *  Notes:
- *    - This file is documentation only and is NOT compiled.
- *    - Links provided for convenience; availability may vary.
- *
- *  This software is open-source for personal and private use.
- *  Commercial use, resale, or inclusion in commercial products
- *  is strictly prohibited under the CC BY-NC-SA 4.0 license.
- *
- *  Contributions welcome.
- * ============================================================
+ * This software is open-source for personal and private use.
+ * Commercial use, resale, or inclusion in commercial products
+ * is strictly prohibited under the CC BY-NC-SA 4.0 license.
  */
 
 
@@ -70,6 +54,17 @@ Thermocouples:
   https://a.co/d/0jifkXaX
 - K-Type Thermocouple Probe (100mm, -100 degrees C to 1250 degrees C)
   https://a.co/d/0fuPfVu2
+- One thermocouple only (TC1, exhaust, CS D7). Water temperatures use the
+  DS18B20 probes (up to 8) on D8.
+
+Optional Data Logging:
+- Micro SD card module, SPI, with on-board 3.3V regulator / level conversion
+  (generic "Micro SD Card Module TF Card Adapter ... 3.3V 5V" type)
+  Wiring: VCC -> 5V, GND -> GND, CS -> D10, SCK -> D9, MOSI -> A0, MISO -> A1
+  (own software-SPI pins; not shared with the thermocouple).
+- Micro SD card: 8-32 GB SDHC, formatted FAT32, "High Endurance" type
+  preferred. exFAT (most 64 GB and larger cards) is not supported.
+  Estimated 0.7 MB/day (about 0.25 GB/year) at 30-second rows; not yet measured.
 
 Future Development:
 - CYD 4.0" Touch Display (320x480)

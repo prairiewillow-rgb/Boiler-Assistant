@@ -1,21 +1,7 @@
 /*
- * ============================================================
- *  Boiler Assistant - Bounded BME280 Driver (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: BoundedBME280.h
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Reuses Adafruit compensation with asynchronous reset,
- *    calibration and sample-startup waits. Checked calibration,
- *    identity, configuration and raw sample reads gate readiness.
- *    Calibration-busy timeout is 250ms; sample startup is 150ms.
- *    Owns one allocated I2C interface through the base driver.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - BoundedBME280
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef BOUNDED_BME280_H
@@ -23,6 +9,7 @@
 
 #include <Adafruit_BME280.h>
 #include <new>
+#include "DebugLog.h"
 
 // Reuse Adafruit's compensation, but never enter its unbounded calibration
 // wait. Reset/calibration/startup waits advance on later loop passes.
@@ -34,24 +21,24 @@ public:
         if (!i2c_dev) i2c_dev = new (std::nothrow) Adafruit_I2CDevice(0x76);
         state = FAILED;
         if (!i2c_dev) {
-            Serial.println("BME280: bus interface allocation failed");
+            DBG_PRINTLN("BME280: bus interface allocation failed");
             return false;
         }
         if (!deviceBegun) {
             if (!i2c_dev->begin(false)) {
-                Serial.println("BME280: bus interface initialization failed");
+                DBG_PRINTLN("BME280: bus interface initialization failed");
                 return false;
             }
             deviceBegun = true;
         }
         uint8_t id = 0;
         if (!readRegisters(BME280_REGISTER_CHIPID, &id, 1) || id != 0x60) {
-            Serial.println("BME280: missing device or invalid chip ID");
+            DBG_PRINTLN("BME280: missing device or invalid chip ID");
             return false;
         }
         _sensorID = id;
         if (!writeRegister(BME280_REGISTER_SOFTRESET, 0xB6)) {
-            Serial.println("BME280: reset transfer failed");
+            DBG_PRINTLN("BME280: reset transfer failed");
             return false;
         }
         startedMs = millis();
@@ -127,7 +114,7 @@ private:
     unsigned long lastPollMs = 0;
 
     InitState fail(const char* message) {
-        Serial.println(message);
+        DBG_PRINTLN(message);
         state = FAILED;
         return state;
     }

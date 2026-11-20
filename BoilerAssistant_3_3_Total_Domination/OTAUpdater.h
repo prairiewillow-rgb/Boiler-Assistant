@@ -1,23 +1,16 @@
 /*
- * ============================================================
- *  Boiler Assistant - OTA Updater API (v3.3.12 "Total Domination")
- *  File: OTAUpdater.h
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Version checks, error results and firmware installation
- *    with progress reporting. Installation enters the idle safe
- *    state and intentionally blocks using OTA library timeouts.
- *    Requires bridge firmware 0.5.0 or newer. Success reboots;
- *    failures return to the operator interface.
- *
- *  Version: Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - OTAUpdater
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef OTA_UPDATER_H
 #define OTA_UPDATER_H
+
+// Set to 0 to omit scheduled checks; manual checks/install remain available.
+// OTA is keypad-only: no automatic checks and no dashboard install. An
+// automatic check during low heap aborted in the WiFi library (watchdog reset).
+#define BOILER_AUTO_UPDATE_CHECKS_ENABLED 0
 
 enum OtaCheckResult {
     OTA_CHECK_NEWER,
@@ -45,6 +38,8 @@ const char* ota_installError();
 
 // Fetches firmware-releases/version.txt from GitHub and compares it to FW_VERSION.
 OtaCheckResult ota_checkForUpdate();
+void ota_dailyCheckLoop(bool boilerIdle);
+bool ota_updateAvailable();
 
 // Puts the boiler in its idle safe state: burn IDLE, fan off, damper closed.
 void ota_enterSafeState();

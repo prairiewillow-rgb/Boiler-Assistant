@@ -1,25 +1,22 @@
 /*
- * ============================================================
- *  Boiler Assistant - Push Delivery (v3.3.12 "Total Domination")
- *  File: PushNotify.cpp
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Queues up to eight alert transitions and test notifications
- *    for ntfy. Connect, write and response handling are split
- *    across service passes; TLS operations remain synchronous.
- *    Offline alerts can queue while quarantine pauses delivery.
- *    Interrupted delivery has an unknown outcome and is not
- *    blindly retried.
- *
- *  Version: Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - PushNotify
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "PushNotify.h"
 
+#if !BOILER_NTFY_ENABLED
+
+void pushnotify_loop() {}
+bool pushnotify_sendTest() { return false; }
+const char* pushnotify_status() { return "Disabled for isolation test"; }
+void pushnotify_networkLost() {}
+
+#else
+
 #include <Arduino.h>
+#include <new>
 #include <WiFiS3.h>
 #include <WiFiSSLClient.h>
 
@@ -27,6 +24,8 @@
 #include "SystemData.h"
 #include "WiFiProvisioning.h"
 #include "RuntimeWiFiClient.h"
+#include "Sensors.h"
+#include "DebugLog.h"
 
 extern SystemData sys;
 
@@ -47,7 +46,15 @@ static uint8_t queueCount = 0;
 static bool queueFullLogged = false;
 enum PushPhase { PUSH_IDLE, PUSH_WRITING, PUSH_WAITING };
 static PushPhase pushPhase = PUSH_IDLE;
-static RuntimeWiFiClient<WiFiSSLClient> pushClient;
+// A WiFiClient owns a 1,024-byte heap receive buffer, so the TLS client exists only while a
+// notification is being sent.
+static RuntimeWiFiClient<WiFiSSLClient>* pushClient = nullptr;
+static void releasePushClient() {
+    if (!pushClient) return;
+    pushClient->stop();
+    delete pushClient;
+    pushClient = nullptr;
+}
 static unsigned long responseStartMs = 0;
 static unsigned long lastPushIoMs = 0;
 static char statusLine[64];
@@ -58,6 +65,8 @@ static bool prevHighTemp        = false;
 static bool prevTankFault       = false;
 static bool prevExhaustFallback = false;
 static bool prevGuardian        = false;
+static bool prevProbeMissing    = false;
+static char probeMissingMsg[48];
 
 static bool pushConfigured() {
     return sys.pushEnabled &&
@@ -68,7 +77,7 @@ static bool pushConfigured() {
 static bool queuePush(const char* title, const char* message, bool urgent) {
     if (!pushConfigured()) return false;
     if (queueCount == PUSH_QUEUE_SIZE) {
-        if (!queueFullLogged) Serial.println("Push: notification queue full");
+        if (!queueFullLogged) DBG_PRINTLN("Push: queue full");
         queueFullLogged = true;
         deliveryStatus = "Queue full";
         return false;
@@ -80,11 +89,11 @@ static bool queuePush(const char* title, const char* message, bool urgent) {
 }
 
 static void finishPush(const char* status) {
-    pushClient.stop();
+    releasePushClient();
     pushPhase = PUSH_IDLE;
     deliveryStatus = status;
-    Serial.print("Push: ");
-    Serial.println(status);
+    DBG_PRINT("Push: ");
+    DBG_PRINTLN(status);
     queueHead = (queueHead + 1) % PUSH_QUEUE_SIZE;
     --queueCount;
     queueFullLogged = false;
@@ -98,9 +107,14 @@ static void servicePush() {
         if (queueCount == 0 ||
             (sendAttempted && now - lastSendMs < NTFY_MIN_INTERVAL_MS)) return;
         sendAttempted = true;
+        if (!pushClient) pushClient = new (std::nothrow) RuntimeWiFiClient<WiFiSSLClient>;
+        if (!pushClient) {
+            finishPush("Out of memory");
+            return;
+        }
         // TLS connect remains synchronous in WiFiS3, but has an explicit bound.
-        pushClient.setConnectionTimeout(2000);
-        if (!pushClient.connect("ntfy.sh", 443)) {
+        pushClient->setConnectionTimeout(2000);
+        if (!pushClient->connect("ntfy.sh", 443)) {
             finishPush("Connection failed");
             return;
         }
@@ -109,18 +123,32 @@ static void servicePush() {
         return;
     }
 
+    if (!pushClient) {
+        finishPush("Interrupted");
+        return;
+    }
+
     if (pushPhase == PUSH_WRITING) {
         const PushMessage& entry = pushQueue[queueHead];
-        char request[512];
-        int length = snprintf(request, sizeof(request),
+        static const char REQUEST_FORMAT[] =
             "POST /%s HTTP/1.1\r\nHost: ntfy.sh\r\nUser-Agent: BoilerAssistant\r\n"
             "Title: %s\r\n%sContent-Type: text/plain\r\nConnection: close\r\n"
-            "Content-Length: %u\r\n\r\n%s",
-            sys.pushTopic, entry.title, entry.urgent ? "Priority: urgent\r\n" : "",
-            static_cast<unsigned int>(strlen(entry.message)), entry.message);
-        if (length < 0 || static_cast<size_t>(length) >= sizeof(request) ||
-            pushClient.write(reinterpret_cast<const uint8_t*>(request), length) !=
-                static_cast<size_t>(length)) {
+            "Content-Length: %u\r\n\r\n%s";
+        const char* priority = entry.urgent ? "Priority: urgent\r\n" : "";
+        unsigned int bodyLength = static_cast<unsigned int>(strlen(entry.message));
+        int length = snprintf(nullptr, 0, REQUEST_FORMAT,
+            sys.pushTopic, entry.title, priority, bodyLength, entry.message);
+        // Heap, not stack: the main stack is only 1 KB.
+        char* request = length > 0 ? static_cast<char*>(malloc(length + 1)) : nullptr;
+        if (request == nullptr) {
+            finishPush("Out of memory");
+            return;
+        }
+        snprintf(request, length + 1, REQUEST_FORMAT,
+            sys.pushTopic, entry.title, priority, bodyLength, entry.message);
+        size_t written = pushClient->write(reinterpret_cast<const uint8_t*>(request), length);
+        free(request);
+        if (written != static_cast<size_t>(length)) {
             finishPush("Request write failed");
             return;
         }
@@ -134,10 +162,10 @@ static void servicePush() {
         finishPush("Response timed out");
         return;
     }
-    int available = pushClient.available();
+    int available = pushClient->available();
     if (available <= 0) return;
     uint8_t buffer[64];
-    int received = pushClient.read(buffer, min(available, 64));
+    int received = pushClient->read(buffer, min(available, 64));
     for (int i = 0; i < received; ++i) {
         char c = static_cast<char>(buffer[i]);
         if (c == '\n') {
@@ -158,11 +186,11 @@ static void servicePush() {
 void pushnotify_loop() {
     if (!pushConfigured()) {
         if ((!sys.pushEnabled || sys.pushTopic[0] == '\0') && queueCount != 0) {
-            pushClient.stop();
+            releasePushClient();
             pushPhase = PUSH_IDLE;
             queueCount = 0;
             deliveryStatus = "Cancelled: push disabled";
-            Serial.println("Push: off; queue cleared");
+            DBG_PRINTLN("Push: off; queue cleared");
         }
         prevHighTemp        = (sys.safetyState == SAFETY_HIGHTEMP);
         prevTankFault       = (sys.safetyState == SAFETY_SENSOR_FAULT &&
@@ -170,6 +198,7 @@ void pushnotify_loop() {
         prevExhaustFallback = sys.exhaustFallbackActive;
         prevGuardian        = (sys.emberGuardianLatched ||
                                sys.burnState == BURN_EMBER_GUARD);
+        prevProbeMissing    = sensors_missingProbe() != nullptr;
         return;
     }
 
@@ -201,6 +230,14 @@ void pushnotify_loop() {
                  guardian ? "Ember Guardian active - reset required" : "Ember Guardian cleared",
                  guardian)) prevGuardian = guardian;
     }
+    const char* missing = sensors_missingProbe();
+    if ((missing != nullptr) != prevProbeMissing) {
+        if (missing) snprintf(probeMissingMsg, sizeof(probeMissingMsg),
+                              "%s stopped reading", missing);
+        if (queuePush(missing ? "Boiler: PROBE MISSING" : "Boiler: Probes OK",
+                 missing ? probeMissingMsg : "All water probes reading again",
+                 false)) prevProbeMissing = missing != nullptr;
+    }
     if (millis() - lastPushIoMs >= 100UL) {
         lastPushIoMs = millis();
         servicePush();
@@ -218,13 +255,16 @@ const char* pushnotify_status() {
 
 void pushnotify_networkLost() {
     if (pushPhase != PUSH_IDLE) {
-        pushClient.stop();
+        releasePushClient();
         pushPhase = PUSH_IDLE;
         if (queueCount != 0) {
             queueHead = (queueHead + 1) % PUSH_QUEUE_SIZE;
             --queueCount;
         }
+
         deliveryStatus = "Interrupted: WiFi lost";
-        Serial.println("Push: WiFi lost mid-send; result unknown");
+        DBG_PRINTLN("Push: WiFi lost mid-send");
     }
 }
+
+#endif // BOILER_NTFY_ENABLED

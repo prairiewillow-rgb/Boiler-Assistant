@@ -1,54 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - Hardware Pinout (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: Pinout.h
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *      Centralized hardware pin definitions for the UNO R4 WiFi
- *      platform used by Boiler Assistant. Ensures:
- *        - Single source of truth for all hardware mappings
- *        - Clean separation between logic and hardware layout
- *        - Safe, explicit pin usage for I2C, SPI, PWM, relays,
- *          and DS18B20 OneWire sensors.
- *
- *      Power Notes:
- *        - ALL 5V devices (LCD, keypad, relays, MAX31855 boards,
- *          DS18B20 sensors) must use the UNO R4's regulated 5V
- *          and GND rails. Do NOT mix external supplies.
- *
- *      WARNING WARNING - BME280 SENSOR VOLTAGE:
- *        - The BME280 module used for outdoor sensing is a
- *          **3.3V-ONLY device**.
- *        - NEVER connect it to 5V power or 5V I2C lines unless
- *          the breakout board includes a regulator + level shifter.
- *        - Direct 5V wiring will permanently damage the sensor.
- *
- *      Notes:
- *        - Primary I2C bus (A4/A5) drives LCD, BME280, keypad.
- *        - Shared bus runs at 100 kHz (PCF8574 limit), with bounded
- *          GPIO clock/STOP recovery. A permanently stuck bus cannot
- *          be repaired in software; inspect wiring/power/pull-ups.
- *        - LCD uses LiquidCrystal_PCF8574 with the original 0x27 mapping
- *          and v3.3.8 row writes. Backpack ACK checks do not verify
- *          individual LCD commands or controller cursor state.
- *        - Keypad 0x20 and LCD retry detected failures after 5 seconds;
- *          keypad recovery requires a stable release before input resumes.
- *        - DS18B20 sensors share a single OneWire bus on D8.
- *        - MAX31855 thermocouples use hardware SPI (D12/D13).
- *        - Fan output on D5: zero-cross synchronized PSM phase control
- *          when a valid Z-C signal is present on D0, legacy PWM otherwise
- *          (both run modes; Continuous does not follow Z-C in 3.3.12).
- *        - Phase timer runs only with validated Z-C and nonzero demand.
- *          More than 32 rising edges in 10ms masks D0's IRQ for 1s;
- *          noisy/missing Z-C falls back to PWM, not controller reset.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - Pinout
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef PINOUT_H
@@ -65,7 +19,7 @@
  *  DIGITAL OUTPUTS
  * ============================================================ */
 
-// Fan dimmer PSM output (phase pulses when Z-C is detected, otherwise PWM)
+// Fan dimmer PSM output (Auto Tank only permits PWM fallback).
 #define PIN_FAN_PWM        D5
 
 // Dimmer zero-cross input; D0 supports external interrupts on UNO R4.
@@ -81,20 +35,34 @@
 #define PIN_DS18B20_DATA   D8
 
 /* ============================================================
- *  SPI - MAX31855 Thermocouples
- *  UNO R4 SPI pins:
+ *  MAX31855 Exhaust Thermocouple (software SPI on the UNO R4 SPI header pins)
  *      SCK  = D13
  *      MISO = D12
  *      MOSI = D11 (unused by MAX31855)
+ *  One K-type thermocouple (TC1, exhaust) is the only thermocouple.
+ *  All water temperatures use the DS18B20 probes on D8.
  * ============================================================ */
 
 #define PIN_MAX31855_MISO  D12  // DO  (Data Out -> MCU MISO)
 #define PIN_MAX31855_SCK   D13  // CLK (Clock from MCU)
-
-// Chip selects (one per thermocouple)
 #define PIN_TC1_CS         D7   // CS (Chip Select) - Exhaust probe
-#define PIN_TC2_CS         D3
-#define PIN_TC3_CS         D4
-#define PIN_TC4_CS         D2   // Keep separate from fan PWM on D5
+
+/* ============================================================
+ *  OPTIONAL MICRO-SD DATA LOGGER (software SPI, own pins)
+ *  Generic SPI micro-SD module with on-board 3.3V regulator and
+ *  level shifter: VCC -> 5V, GND -> GND. The card never shares
+ *  the MAX31855 lines. Units without a card simply report
+ *  "no card"; set SD_LOGGING_ENABLED to 0 to leave these pins
+ *  untouched entirely.
+ *  Card: FAT32-formatted 8-32 GB SDHC, "High Endurance" preferred.
+ *  exFAT (most 64 GB+ cards) is not supported.
+ * ============================================================ */
+
+#define SD_LOGGING_ENABLED 1
+
+#define PIN_SD_CS          D10
+#define PIN_SD_SCK         D9
+#define PIN_SD_MOSI        A0
+#define PIN_SD_MISO        A1
 
 #endif

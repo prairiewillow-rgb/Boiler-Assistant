@@ -1,17 +1,7 @@
 /*
- * ============================================================
- *  Boiler Assistant - OTA Updater (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: OTAUpdater.cpp
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Checks GitHub for a newer firmware version and installs it
- *    through the UNO R4 WiFi's ESP32-S3 bridge (OTAUpdate library).
- *    The boiler is forced into its idle safe state before download.
- *    Requires WiFi bridge firmware 0.5.0 or newer.
- * ============================================================
+ * Boiler Assistant - OTAUpdater
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "OTAUpdater.h"
@@ -22,14 +12,18 @@
 #include "SystemData.h"
 #include "Pinout.h"
 #include "RuntimeCredentials.h"
+#include "NetworkSettings.h"
 #include "WiFiAPI.h"
+#include "WiFiProvisioning.h"
 #include "MQTTClient.h"
+#include "DebugLog.h"
 
 #include <Arduino.h>
 #include <WiFiS3.h>
 #include <WiFiSSLClient.h>
 #include <OTAUpdate.h>
-#include <WDT.h>
+#include "Watchdog.h"
+#include <stdlib.h>
 
 extern SystemData sys;
 extern RuntimeCredentials runtimeCreds;
@@ -56,9 +50,25 @@ static const unsigned long OTA_DOWNLOAD_TIMEOUT_MS = 300000UL;
 static char latestVersion[16] = "";
 static char checkError[21] = "";
 static char installError[21] = "";
+static bool versionCheckAttempted = false;
+static bool lastVersionCheckHadNoWifi = false;
+static uint32_t lastVersionCheckMs = 0;
+static const unsigned long OTA_DAILY_CHECK_INTERVAL_MS = 86400000UL;
+static const unsigned long OTA_NO_WIFI_RETRY_MS = 300000UL;
 
 static bool parseVersion(const char* text, int& major, int& minor, int& patch) {
-    return sscanf(text, "%d.%d.%d", &major, &minor, &patch) == 3;
+    int* parts[] = {&major, &minor, &patch};
+    for (uint8_t i = 0; i < 3; ++i) {
+        char* end;
+        long value = strtol(text, &end, 10);
+        if (end == text) return false;
+        *parts[i] = static_cast<int>(value);
+        if (i < 2) {
+            if (*end != '.') return false;
+            text = end + 1;
+        }
+    }
+    return true;
 }
 
 static int compareVersions(const char* a, const char* b) {
@@ -83,6 +93,27 @@ const char* ota_latestVersion() {
     return latestVersion;
 }
 
+bool ota_updateAvailable() {
+    return latestVersion[0] != '\0' &&
+           compareVersions(latestVersion, FW_VERSION) > 0;
+}
+
+void ota_dailyCheckLoop(bool boilerIdle) {
+#if BOILER_AUTO_UPDATE_CHECKS_ENABLED
+    if (!boilerIdle) return;
+
+    unsigned long retryInterval = lastVersionCheckHadNoWifi
+                                     ? OTA_NO_WIFI_RETRY_MS
+                                     : OTA_DAILY_CHECK_INTERVAL_MS;
+    if (versionCheckAttempted &&
+        millis() - lastVersionCheckMs < retryInterval) return;
+
+    ota_checkForUpdate();
+#else
+    (void)boilerIdle;
+#endif
+}
+
 const char* ota_checkError() {
     return checkError;
 }
@@ -98,10 +129,13 @@ OtaCheckResult ota_checkForUpdate() {
     latestVersion[0] = '\0';
     checkError[0] = '\0';
 
-    if (WiFi.status() != WL_CONNECTED) return OTA_CHECK_NO_WIFI;
+    versionCheckAttempted = true;
+    lastVersionCheckMs = millis();
+    lastVersionCheckHadNoWifi = WiFi.status() != WL_CONNECTED;
+    if (lastVersionCheckHadNoWifi) return OTA_CHECK_NO_WIFI;
 
     WiFiSSLClient client;
-    WDT.refresh();
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
     if (!client.connect(OTA_HOST, 443)) {
         strncpy(checkError, "SSL CONNECT FAILED", sizeof(checkError) - 1);
         return OTA_CHECK_FAILED;
@@ -125,7 +159,7 @@ OtaCheckResult ota_checkForUpdate() {
     // connected() can report false before buffered data is read, so only stop once data has arrived.
     unsigned long start = millis();
     while (millis() - start < OTA_HTTP_TIMEOUT_MS) {
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
         if (!client.available()) {
             if (gotData && !client.connected()) break;
             delay(5);
@@ -163,10 +197,10 @@ OtaCheckResult ota_checkForUpdate() {
         snprintf(checkError, sizeof(checkError), "BAD VER:%s", latestVersion);
     }
 
-    Serial.print("OTA check status: ");
-    Serial.println(statusLine);
-    Serial.print("OTA check body: ");
-    Serial.println(latestVersion);
+    DBG_PRINT("OTA st: ");
+    DBG_PRINTLN(statusLine);
+    DBG_PRINT("OTA body: ");
+    DBG_PRINTLN(latestVersion);
 
     if (checkError[0] != '\0') {
         latestVersion[0] = '\0';
@@ -196,13 +230,16 @@ void ota_enterSafeState() {
 static void ota_recover(OTAUpdate& ota) {
     ota.reset();
     delay(500);
-    WDT.refresh();
-    if (WiFi.status() != WL_CONNECTED && runtimeCreds.ssid[0] != '\0') {
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
+    if ((WiFi.status() != WL_CONNECTED || networkSettings.fixed) &&
+        runtimeCreds.ssid[0] != '\0') {
         WiFi.disconnect();
         delay(500);
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
+        if (!wifi_prov_setHostname()) return;
+        if (!wifi_prov_applyNetworkConfig()) return;
         WiFi.begin(runtimeCreds.ssid, runtimeCreds.pass);
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
     }
 }
 
@@ -216,10 +253,10 @@ static const uint8_t OTA_MAX_ATTEMPTS = 3;
 // bridge time to bounce its AT modem and rejoin WiFi before the next attempt.
 static bool ota_waitBridgeReady(unsigned long timeoutMs) {
     delay(3000);  // let the rebooted bridge finish restarting
-    WDT.refresh();
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
     unsigned long start = millis();
     while (millis() - start < timeoutMs) {
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
         if (WiFi.status() == WL_CONNECTED) return true;
         delay(250);
     }
@@ -230,8 +267,8 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
     modem.timeout(MODEM_TIMEOUT);
     installError[0] = '\0';
 
-    Serial.print("OTA wifi bridge fw: ");
-    Serial.println(WiFi.firmwareVersion());
+    DBG_PRINT("OTA fw: ");
+    DBG_PRINTLN(WiFi.firmwareVersion());
 
     if (!wifiBridgeSupportsOta()) return OTA_INSTALL_WIFI_FW_OLD;
 
@@ -241,21 +278,21 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
     mqtt_stop();
     wifiapi_stop();
     delay(500);
-    WDT.refresh();
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
 
     OTAUpdate ota;
     int size = -1;
 
     for (uint8_t attempt = 1; attempt <= OTA_MAX_ATTEMPTS; attempt++) {
-        Serial.print("OTA attempt ");
-        Serial.print(attempt);
-        Serial.print(" of ");
-        Serial.println(OTA_MAX_ATTEMPTS);
+        DBG_PRINT("OTA attempt ");
+        DBG_PRINT(attempt);
+        DBG_PRINT(" of ");
+        DBG_PRINTLN(OTA_MAX_ATTEMPTS);
 
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
         int ret = ota.begin(OTA_LOCAL_PATH);
-        Serial.print("OTA begin: ");
-        Serial.println(ret);
+        DBG_PRINT("OTA begin: ");
+        DBG_PRINTLN(ret);
         if (ret != OTAUpdate::OTA_ERROR_NONE) {
             snprintf(installError, sizeof(installError), "BEGIN ERR %d", ret);
             ota_recover(ota);
@@ -264,10 +301,10 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
             continue;
         }
 
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
         ret = ota.setCACert(OTA_ROOT_CA);
-        Serial.print("OTA setCACert: ");
-        Serial.println(ret);
+        DBG_PRINT("OTA setCACert: ");
+        DBG_PRINTLN(ret);
         if (ret != OTAUpdate::OTA_ERROR_NONE) {
             snprintf(installError, sizeof(installError), "CERT ERR %d", ret);
             ota_recover(ota);
@@ -276,10 +313,10 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
             continue;
         }
 
-        WDT.refresh();
+        watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
         size = ota.startDownload(OTA_FILE_URL, OTA_LOCAL_PATH);
-        Serial.print("OTA startDownload: ");
-        Serial.println(size);
+        DBG_PRINT("OTA dl: ");
+        DBG_PRINTLN(size);
         if (size <= 0) {
             snprintf(installError, sizeof(installError), "START ERR %d", size);
             ota_recover(ota);
@@ -292,11 +329,11 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
         int received = 0;
         bool downloadFailed = false;
         while (received < size) {
-            WDT.refresh();
+            watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
             received = ota.downloadProgress();
             if (received < 0 || millis() - start > OTA_DOWNLOAD_TIMEOUT_MS) {
-                Serial.print("OTA download error: ");
-                Serial.println(received);
+                DBG_PRINT("OTA dl err: ");
+                DBG_PRINTLN(received);
                 snprintf(installError, sizeof(installError), "DL ERR %d", received);
                 downloadFailed = true;
                 break;
@@ -318,20 +355,20 @@ OtaInstallResult ota_install(void (*progress)(int percent)) {
 
     if (size <= 0) return OTA_INSTALL_DOWNLOAD_FAILED;
 
-    WDT.refresh();
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
     int ret = ota.verify();
-    Serial.print("OTA verify: ");
-    Serial.println(ret);
+    DBG_PRINT("OTA verify: ");
+    DBG_PRINTLN(ret);
     if (ret != OTAUpdate::OTA_ERROR_NONE) {
         snprintf(installError, sizeof(installError), "VERIFY ERR %d", ret);
         ota_recover(ota);
         return OTA_INSTALL_VERIFY_FAILED;
     }
 
-    WDT.refresh();
+    watchdog_kick(WATCHDOG_SLOW_LIMIT_MS);
     ret = ota.update(OTA_LOCAL_PATH);
-    Serial.print("OTA update: ");
-    Serial.println(ret);
+    DBG_PRINT("OTA update: ");
+    DBG_PRINTLN(ret);
     snprintf(installError, sizeof(installError), "FLASH ERR %d", ret);
     ota_recover(ota);
     return OTA_INSTALL_UPDATE_FAILED;

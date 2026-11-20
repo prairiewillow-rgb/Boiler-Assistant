@@ -1,32 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - System State API (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: SystemState.h
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Defines all global enumerations and constants used by the
- *    Boiler Assistant controller. This header provides the
- *    authoritative definitions for:
- *
- *      - Burn engine states
- *      - Safety states
- *      - Run modes
- *      - Environmental seasons
- *      - UI state machine
- *      - Probe roles
- *
- *    Architectural Notes:
- *      - No logic belongs here - only enums and constants.
- *      - SystemData and SystemState.cpp implement behavior.
- *      - All modules must treat these enums as canonical.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - SystemState
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef SYSTEMSTATE_H
@@ -134,25 +110,8 @@ typedef enum {
     UI_SAFETY_STATUS,
     UI_RUNMODE_CONFIRM_CONTINUOUS,
 
-    /* C: Environment */
+    /* C: Seasonal status (read only; edit in the dashboard) */
     UI_ENV_MENU,
-    UI_SEASONS_MENU,
-    UI_SEASON_DETAIL_MENU,
-    UI_SEASON_DETAIL_MENU_2,
-
-    /* Season edit screens */
-    UI_SEASON_EDIT_START,
-    UI_SEASON_EDIT_BUFFER,
-    UI_SEASON_EDIT_SETPOINT,
-    UI_SEASON_EDIT_TANKHIGH,
-    UI_SEASON_EDIT_TANKLOW,
-    UI_SEASON_EDIT_CLAMPMAX,
-
-    /* Environment mode / lockout */
-    UI_ENV_LOCKOUT,
-    UI_ENV_MODE,
-    UI_ENV_AUTOSEASON,
-    UI_ENV_LOCKOUT_HOURS,
 
     /* D: Sensors & Network */
     UI_SENSORS_MENU,

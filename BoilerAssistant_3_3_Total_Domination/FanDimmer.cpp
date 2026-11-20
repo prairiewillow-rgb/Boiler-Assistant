@@ -1,42 +1,14 @@
 /*
- * ============================================================
- *  Boiler Assistant - Fan Dimmer Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: FanDimmer.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Fan output driver for the PWM/dimmer hardware. When a valid
- *    zero-cross signal is present on D0, the fan output on D5 uses
- *    zero-cross-synchronized PSM phase control. Without a valid
- *    zero-cross signal, output automatically falls back to legacy
- *    PWM in both Auto Tank and Continuous (3.3.12 restores the 3.3.9
- *    Continuous behavior; Continuous no longer follows Z-C).
- *
- *    Responsibilities:
- *      - Zero-cross detection with half-cycle validation
- *      - Phase-fired PSM pulses timed from each zero-cross
- *      - Automatic fallback to analogWrite PWM when Z-C is absent
- *      - Non-blocking, timer/interrupt-driven output
- *
- *  Architectural Notes:
- *      - This module owns the physical fan output pin only.
- *      - Phase timer starts only with validated Z-C and nonzero demand.
- *      - Excessive Z-C edges mask the input IRQ for one second;
- *        main-loop servicing applies the existing PWM fallback.
- *      - Fan demand decisions live in FanControl; state logic in
- *        BurnEngine; both call fan_dimmer_setPercent().
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - FanDimmer
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "FanDimmer.h"
 #include "Pinout.h"
 #include "SystemData.h"
+#include "DebugLog.h"
 #include <FspTimer.h>
 #include <FspLinkIrq.h>
 
@@ -218,7 +190,7 @@ bool fan_dimmer_init() {
         !phaseTimer.setup_overflow_irq() ||
         !phaseTimer.open()) {
         phaseTimer.end();
-        Serial.println("Fan: phase timer unavailable; using PWM fallback");
+        DBG_PRINTLN("Fan: no timer");
         return false;
     }
 
@@ -236,22 +208,22 @@ bool fan_dimmer_init() {
         detachInterrupt(digitalPinToInterrupt(PIN_FAN_ZERO_CROSS));
         phaseTimer.end();
         phaseTimerReady = false;
-        Serial.println("Fan: zero-cross IRQ unavailable; using PWM fallback");
+        DBG_PRINTLN("Fan: no ZC IRQ");
         return false;
     }
     return true;
 }
 
 int fan_dimmer_setPercent(int percent) {
-    // 3.3.12: no mode requires Z-C; requireZeroCross stays false so
-    // Continuous uses the same PWM fallback as Auto Tank (3.3.9 behavior).
+    // 3.3.12 behavior: no mode requires Z-C. Continuous uses the same PWM
+    // fallback as Auto Tank when the boiler signal is absent.
     requireZeroCross = false;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     if (zeroCrossSuppressed) {
         if (!noiseLogged) {
             noiseLogged = true;
-            Serial.println("Fan: zero-cross interrupt noise; PWM fallback, retry in 1s");
+            DBG_PRINTLN("Fan: noisy ZC; retry 1s");
         }
         if (micros() - zeroCrossSuppressedAtUs >= 1000000UL) {
             noInterrupts();
@@ -291,7 +263,7 @@ int fan_dimmer_setPercent(int percent) {
                      nowUs - lastCrossUs <= ZC_TIMEOUT_US;
     if (requireZeroCross && !zcIsValid) percent = 0;
 
-    // If the signal degrades while in phase mode, drop back to plain PWM.
+    // Auto Tank retains PWM fallback; Continuous has already gated demand to zero.
     if (outputUsesPhaseControl && !zcIsValid) {
         phaseTimer.stop();
         noInterrupts();
@@ -316,7 +288,7 @@ int fan_dimmer_setPercent(int percent) {
                 phaseControlEnabled = false;
                 outputUsesPhaseControl = false;
                 phaseTimerReady = false;
-                Serial.println("Fan: phase timer start failed; using PWM fallback");
+                DBG_PRINTLN("Fan: timer start fail");
                 if (requireZeroCross) percent = 0;
             }
         }

@@ -1,126 +1,31 @@
 /*
- * ============================================================
- *  Boiler Assistant - Main Firmware (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: BoilerAssistant_3_3_12_Total_Domination.ino
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
+ * Boiler Assistant 3.4.0 - Total Domination
+ * Main firmware for Arduino UNO R4 WiFi
  *
- *  Description:
- *    Core deterministic firmware for the Boiler Assistant controller.
- *    Version 3.3.12 continues the Total Domination Architecture (TDA):
- *      - SystemData as the single source of truth
- *      - Timed/event-driven main loop with bounded sensor transactions
- *      - Unified keypad-driven UI with numeric selection everywhere
- *      - Fully transparent operator-facing logic and documentation
+ * Auto Tank and Continuous burn control, with LCD and keypad operation.
+ * Monitors a type-K exhaust probe, DS18B20 water probes, and an optional
+ * BME280 outdoor sensor for automatic seasonal profiles.
+ * The local Wi-Fi dashboard shows live readings, linked boiler and loop
+ * charts, and completed periods from the last 24 hours in Burn Times.
+ * Optional exFAT SD logging writes one combined CSV per UTC day;
+ * saved charts and Burn Times require a working card and valid time.
  *
- *    Subsystems coordinated by this module:
- *      - Environmental sensing (BME280)
- *      - Temperature sensing (DS18B20 + MAX31855 exhaust)
- *      - Burn engine logic (demand, ramp, hold, safety)
- *      - Fan control (clamps, ramping, startup kick, damper pre-delay)
- *      - Fan dimmer output (zero-cross PSM phase control, PWM fallback)
- *      - UI rendering (LCD) + keypad-driven operator interface
- *      - EEPROM-backed configuration and seasonal profiles
- *      - WiFi provisioning (saved STA retries, AP without credentials)
- *      - Incremental WiFi API + MQTT telemetry (synchronous modem I/O)
- *      - Push notifications (ntfy)
- *
- *  v3.3 Additions:
- *      - Adaptive fan curve with persistent learning
- *      - Fan-off deadband with one-PWM variable-speed control
- *      - Exhaust-probe fallback at max clamp fan output
- *      - Mode-aware tank-probe safety handling
- *      - Address-stable water probes with periodic rescanning
- *      - Named monitor-only probes for MQTT and dashboard telemetry
- *      - Live diagnostics through the web dashboard and MQTT
- *      - Authenticated remote alarm reset; run mode remains local-only
- *
- *  v3.3.1 Additions:
- *      - Damper opens before fan start (pre-fan delay)
- *      - 2-second startup kick before returning to requested speed
- *      - Zero-cross phase control with automatic PWM fallback
- *
- *  v3.3.12 Release:
- *      - LCD backlight turns off after 5 minutes without a key press;
- *        stays on while a safety, Ember Guardian or exhaust-fallback
- *        alarm is active. The waking key press is not acted on.
- *      - Wake press, and the first press after a 5-second pause, fully
- *        reinitialize the LCD and repaint every row to recover a stuck screen
- *      - Continuous mode rolled back to 3.3.9 behavior: no longer follows
- *        boiler Z-C. Auto-starts BOOST at power-up and when selected; uses
- *        the same Z-C phase control / PWM fallback as Auto Tank.
- *      - Dashboard "What's new" card (WhatsNewDashboard.h): shown at the top
- *        of Main once per browser after an update, then kept in Settings.
- *        Edit its list for every release.
- *      - Wi-Fi more patient on weak links: each bridge command may wait 5 s
- *        (was 3 s) before the bridge is reset; whole loop passes are only a
- *        15 s backstop, so a slow page load no longer resets Wi-Fi by itself.
- *        Time/RSSI/join commands are now timed individually. Dashboard send
- *        window 30 s (was 12 s), request window 5 s (was 2 s).
- *      - Fan modes, burn logic, pin mappings and EEPROM layout unchanged
- *      - Compiled firmware still requires validation on installed hardware
- *
- *  v3.3.11 Release (retained):
- *      - Release identity and source headers updated to 3.3.11
- *      - Retains the LiquidCrystal_PCF8574 rollback from updated 3.3.9
- *
- *  v3.3.9 Additions (retained):
- *      - PCF8574-compatible 100 kHz shared I2C bus
- *      - Explicit bounded bus recovery on UNO R4 (timeout alone
- *        does not reset the Renesas I2C peripheral)
- *      - LCD rollback to LiquidCrystal_PCF8574 and v3.3.8 row writes;
- *        backpack connection checks, reinitialization and cache invalidation
- *        preserve the current menu. Individual LCD writes are not verified.
- *      - Checked/rate-limited keypad scans and release-to-resume recovery
- *      - Visible-only, serialized dashboard polling every 5 seconds;
- *        settings/history refresh at most once a minute
- *      - HTTP requests/responses processed in bounded chunks per loop
- *      - MQTT 15-second keepalive (milliseconds API), short connection
- *        timeout, and incremental Home Assistant discovery publishing
- *      - Queued push delivery with incremental response reads and status
- *      - /api/state exposes loop/network last and maximum duration in ms
- *      - Saved WiFi credentials stay in STA mode during outages, with
- *        30/60/120s retry backoff and 5s stable-link socket restart
- *      - Runtime AT waits shortened to 3s; slow operations quarantine
- *        networking, with quiet/reboot waits and staged socket cleanup
- *      - Automatic bridge reset needs compatible ESP32-S3 firmware
- *        (0.5.0+ baseline); an unacknowledged reset stays offline
- *      - Network Info/telemetry use cached IP/RSSI; scheduled self-clean
- *        uses cached UTC (valid for 24h), never WiFi calls in control
- *      - BME280 calibration waits are asynchronous and deadline-checked
- *      - BME identity/configuration/sample verification; only valid
- *        measurements mark it healthy. Missing BME retries every 30s
- *        without resetting the shared LCD/keypad bus.
- *      - Fan phase timer runs only with valid Z-C and nonzero demand;
- *        noisy Z-C IRQ is masked for 1s before retrying PWM fallback
- *      - Runtime OneWire rescans have address/time budgets
- *      - Rebuild from source; do not reuse older release binaries
- *
- *  Architectural Notes:
- *      - I2C transactions are bounded; recovery retries are rate-limited
- *      - All subsystems operate on timed or event-driven cadence
- *      - WiFiS3 modem calls/connect remain synchronous; requested transport
- *        timeouts and chunking reduce stalls but do not guarantee latency
- *      - A top-level modem operation may contain multiple 3s AT waits;
- *        this is not hard real-time. Interactive OTA retains its own waits.
- *      - UI executes last to ensure stable system state before rendering
- *      - Pinout.h and SystemState.h are the authoritative hardware/state contracts
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <WDT.h>
+#include "Watchdog.h"
 
 #include "SystemState.h"          // MUST be first project header
 #include "EnvironmentalLogic.h"   // MUST be second
 #include "SystemData.h"           // MUST be after both
 #include "UI.h"
+#include "BurnPerformance.h"
+#include "DataLogger.h"
+#include "DataShare.h"
 
 #include "EEPROMStorage.h"
 #include "Sensors.h"
@@ -135,6 +40,7 @@
 #include "WiFiAPI.h"
 #include "MQTTClient.h"
 #include "WiFiProvisioning.h"
+#include "OTAUpdater.h"
 #include "PushNotify.h"
 
 /* ============================================================
@@ -167,24 +73,26 @@ String flueLowEditValue;
 String flueRecEditValue;
 String tankLowEditValue;
 String tankHighEditValue;
-String envSeasonEditValue;
-String envSetpointEditValue;
-String envLockoutEditValue;
 
 /* Forward declarations */
 double exhaust_readF_cached();
 
-/* Local implementation of exhaust smoothing */
+/* Five-second low-pass, advanced only by fresh valid sensor samples. */
 double smoothExhaustF(double rawF) {
-    if (isnan(rawF)) {
+    static unsigned long lastSampleMs = 0;
+    const unsigned long sampleMs = sys.exhaustLastGoodMs;
+    if (!isfinite(rawF) || !sys.exhaustSensorOK) {
         return sys.exhaustSmoothF;
     }
 
-    if (isnan(sys.exhaustSmoothF)) {
+    if (!isfinite(sys.exhaustSmoothF)) {
         sys.exhaustSmoothF = rawF;
-    } else {
-        sys.exhaustSmoothF = sys.exhaustSmoothF * 0.8 + rawF * 0.2;
+    } else if (sampleMs != lastSampleMs) {
+        const float elapsedMs = static_cast<float>(sampleMs - lastSampleMs);
+        const float alpha = elapsedMs / (5000.0f + elapsedMs);
+        sys.exhaustSmoothF += alpha * (rawF - sys.exhaustSmoothF);
     }
+    lastSampleMs = sampleMs;
     return sys.exhaustSmoothF;
 }
 
@@ -202,7 +110,8 @@ void setup() {
     fan_dimmer_init();
 
     Serial.println();
-    Serial.println("=== Boiler Assistant v3.3.12 Boot ===");
+    Serial.println("=== Boiler Assistant v3.4.0 Boot ===");
+    watchdog_bootReport();
 
     i2cbus_init();
 
@@ -211,6 +120,7 @@ void setup() {
 
     // Load all EEPROM-backed settings into sys.*
     eeprom_init();
+    datashare_init();
 
     // Sensors + logic
     sensors_init();
@@ -220,6 +130,9 @@ void setup() {
     keypad_init(Wire);
     ui_init();
 
+    // Optional SD card: a missing card is reported, never fatal.
+    datalogger_init();
+
     // Saved credentials retry offline; AP setup is for unprovisioned units.
     wifi_prov_init();
 
@@ -228,8 +141,9 @@ void setup() {
         mqtt_init();
     }
 
-    // Retain the existing watchdog interval; modem commands remain synchronous.
-    WDT.begin(16000);
+    // Hardware watchdog (5 s) fed from SysTick while the loop checks in
+    // within 30 s; WDT.begin(16000) exceeded the UNO R4 maximum and failed.
+    watchdog_begin();
 }
 
 /* ============================================================
@@ -239,12 +153,14 @@ void setup() {
 void loop() {
 
     unsigned long loopStartMs = millis();
-    WDT.refresh();
+    watchdog_kick();
+    watchdog_stage(WD_SENSORS);
     i2cbus_loop();
     sensors_loop();
     unsigned long now = millis();
 
     // 0) Keypad
+    watchdog_stage(WD_KEYPAD);
     char k = keypad_read();
     if (k) {
         double rawExhKey = exhaust_readF_cached();
@@ -254,6 +170,7 @@ void loop() {
     }
 
     // 1) Sensors
+    watchdog_stage(WD_PROBES);
     static unsigned long lastBME = 0;
     if (now - lastBME > 3000) {
         sensors_readBME280();
@@ -261,13 +178,9 @@ void loop() {
         lastBME = now;
     }
 
-    static unsigned long lastWaterRead = 0;
-    if (now - lastWaterRead > 500) {
-        sensors_readWaterProbes();
-        lastWaterRead = now;
-    }
+    // Self-timed: one conversion every 500 ms, one probe read per pass.
+    sensors_readWaterProbes();
 
-    systemdata_recordWaterHistory(now);
 
     static unsigned long lastProbeScan = 0;
     if (now - lastProbeScan >= 60000UL) {
@@ -276,6 +189,7 @@ void loop() {
     }
 
     // 2) Burn engine - exhaust pipeline
+    watchdog_stage(WD_BURN);
     double rawExh = exhaust_readF_cached();
     sys.exhaustRawF = rawExh;                    // live raw flue temp for Guardian
     double smoothedExh = smoothExhaustF(rawExh);
@@ -292,6 +206,11 @@ void loop() {
     // 4) Update SystemData snapshot for UI / WiFi / MQTT
 
     sys.fanFinal = fanPercent;
+    burnperformance_loop(millis());
+
+    // SD logging (observation only).
+    watchdog_stage(WD_SDLOG);
+    datalogger_loop(millis());
 
     sys.uptimeMs = now;
 
@@ -300,24 +219,41 @@ void loop() {
     unsigned long ioStartedMs = millis();
     // Stop further clients in this pass after an overlong bridge operation.
     // Recovery is serviced separately even while regular I/O is quarantined.
+    watchdog_stage(WD_LINK);
     bool ioReady = wifi_prov_prepareIo();
     wifi_prov_networkLoop();
-    // Each bridge command is timed on its own; these whole-pass checks are
-    // a backstop so several slow-but-answered steps do not reset Wi-Fi.
     if (ioReady) wifi_prov_finishIo(ioStartedMs, "link monitor", WIFI_PASS_LIMIT_MS);
-    if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
+#if BOILER_AUTO_UPDATE_CHECKS_ENABLED
+    if (!wifi_prov_isAPMode() && sys.wifiOK &&
+        sys.controlMode == RUNMODE_AUTO_TANK &&
+        sys.burnState == BURN_IDLE && sys.safetyState == SAFETY_OK &&
+        wifi_prov_prepareIo()) {
+        // This bounded OTA check may take 10s; only run when safe and do not
+        // treat its expected timeout as an unresponsive runtime modem call.
+        watchdog_stage(WD_OTA);
+        ota_dailyCheckLoop(true);
+    }
+#endif
+    if (wifi_prov_networkChangePending() ||
+        (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo())) {
         ioStartedMs = millis();
+        watchdog_stage(WD_HTTP);
         wifiapi_loop();
         wifi_prov_finishIo(ioStartedMs, "HTTP", WIFI_PASS_LIMIT_MS);
+        // A stalled phone send may take up to WIFI_SEND_LIMIT_MS; keep the
+        // following MQTT/push steps inside a fresh watchdog window.
+        watchdog_kick();
     }
     if (!wifi_prov_isAPMode() && sys.wifiOK && wifi_prov_prepareIo()) {
         ioStartedMs = millis();
+        watchdog_stage(WD_MQTT);
         mqtt_loop();
         wifi_prov_finishIo(ioStartedMs, "MQTT", WIFI_PASS_LIMIT_MS);
     }
     if (!wifi_prov_isAPMode()) {
         ioStartedMs = millis();
         ioReady = wifi_prov_prepareIo();
+        watchdog_stage(WD_PUSH);
         pushnotify_loop();
         if (ioReady) wifi_prov_finishIo(ioStartedMs, "push", WIFI_PASS_LIMIT_MS);
     }
@@ -325,9 +261,11 @@ void loop() {
     if (sys.networkLastMs > sys.networkMaxMs) sys.networkMaxMs = sys.networkLastMs;
 
     // 6) UI
+    watchdog_stage(WD_SCREEN);
     ui_showScreen(uiState, sys.exhaustSmoothF, fanPercent);
 
     // 7) Provisioning AP handler
+    watchdog_stage(WD_PROV);
     wifi_prov_loop();
     sys.loopLastMs = millis() - loopStartMs;
     if (sys.loopLastMs > sys.loopMaxMs) sys.loopMaxMs = sys.loopLastMs;

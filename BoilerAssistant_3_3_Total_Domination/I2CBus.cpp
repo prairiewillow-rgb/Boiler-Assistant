@@ -1,23 +1,12 @@
 /*
- * ============================================================
- *  Boiler Assistant - Shared I2C Recovery (v3.3.12 "Total Domination")
- *  File: I2CBus.cpp
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Owns the 100 kHz LCD/keypad/BME bus and 25ms Wire timeout.
- *    Recovery closes Wire, emits up to nine open-drain clock
- *    pulses and a STOP, then reinitializes the peripheral.
- *    Held-line checks and retries use one-second intervals;
- *    a generation counter informs device drivers of recovery.
- *
- *  Version: Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - I2CBus
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "I2CBus.h"
 #include "Pinout.h"
+#include "DebugLog.h"
 #include <Wire.h>
 
 static const unsigned long RECOVERY_INTERVAL_MS = 1000UL;
@@ -78,7 +67,7 @@ static void recoverBus() {
     configureWire();
     ++generation;
     recoveryPending = !busReady;
-    Serial.println(busReady ? "I2C: bus recovered"
+    DBG_PRINTLN(busReady ? "I2C: bus recovered"
                             : "I2C: bus still held LOW; retrying in 1s");
 }
 

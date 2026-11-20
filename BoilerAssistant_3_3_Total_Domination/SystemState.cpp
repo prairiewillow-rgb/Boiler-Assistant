@@ -1,31 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - System State Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: SystemState.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Defines deterministic startup and reset behavior for the
- *    Boiler Assistant controller. This module owns the high-level
- *    burn engine state, safety state, and tank setpoint defaults
- *    used during initialization and subsystem resets.
- *
- *    Responsibilities:
- *      - systemstate_init()  - establish safe, predictable boot state
- *      - systemstate_reset() - restore burn engine to a known state
- *
- *    Architectural Notes:
- *      - SystemState never touches EEPROM or UI logic
- *      - SystemData (sys.*) is the single source of truth
- *      - Startup always enters BURN_RAMP for deterministic ignition
- *      - Safety always starts cleared (SAFETY_OK)
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - SystemState
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "SystemState.h"

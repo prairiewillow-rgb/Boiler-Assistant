@@ -1,36 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - Sensor API (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: Sensors.h
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Public interface for the unified sensor subsystem. Provides
- *    deterministic access to:
- *
- *      - MAX31855 exhaust thermocouple (cached reads)
- *      - DS18B20 water probes (scan + read)
- *      - BME280 outdoor environmental sensor
- *
- *    Architectural Notes:
- *      - All live values are written directly into SystemData (sys.*)
- *      - BME280 bus interface is allocated once; startup waits advance
- *        asynchronously with a 250ms calibration-busy deadline
- *      - BME identity/configuration/raw sample checks precede readiness;
- *        only a valid measurement marks it healthy, failures clear all values
- *      - Missing/invalid BME retries every 30s without resetting LCD/keypad;
- *        shared-bus held-line recovery remains owned by I2CBus
- *      - Runtime OneWire rescans are capped at 250ms between searches
- *        and twice MAX_WATER_PROBES addresses; retain old map on timeout
- *      - Probe roles resolved through sys.probeRoleMap
- *      - All implementation resides in Sensors.cpp
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - Sensors
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef SENSORS_H
@@ -54,10 +26,23 @@ void scanWaterProbes();
 // Re-scan the DS18B20 bus occasionally for probes that were reconnected.
 void sensors_rescanWaterProbes();
 
-// Read DS18B20 water probes into sys.waterTempF[]
+// Advance DS18B20 conversion/reads into sys.waterTempF[]; call every loop pass.
 void sensors_readWaterProbes();
 
+// Make a detected probe the tank (control) probe and save it by serial number.
+bool sensors_setTankProbe(uint8_t index);
+
+// Rename a detected probe; the name is saved against its serial number.
+bool sensors_setProbeName(uint8_t index, const char* name);
+
+// Uppercase ROM ID, stable across discovery order changes; output needs 17 bytes.
+bool sensors_waterProbeId(uint8_t index, char* output);
+
 // Read BME280 into sys.envTempF / sys.envHumidity / sys.envPressure
+// Name of the first probe silent for 60 s ("Tank probe" if the saved tank
+// probe was not found at boot), or nullptr when every probe is reading.
+const char* sensors_missingProbe();
+
 void sensors_readBME280();
 
 #endif

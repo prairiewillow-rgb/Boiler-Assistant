@@ -1,38 +1,13 @@
 /*
- * ============================================================
- *  Boiler Assistant - Keypad I2C Driver (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: Keypad_I2C.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Checked, rate-limited I2C scanning of the 4x4 PCF8574 keypad.
- *    Failed transfers suspend input until recovery and a stable
- *    release, preventing phantom key events after a bus reset.
- *
- *    Features:
- *      - 4x4 matrix scan (rows driven low, columns read)
- *      - Debounce filtering (15 ms stable requirement)
- *      - Stable key reporting (no repeats until release)
- *      - Zero blocking delays (only us-level settling)
- *      - Five-second device retry after transfer failure
- *
- *    Notes:
- *      - scanMatrix() performs raw hardware scanning
- *      - keypad_read() applies debounce + stable reporting
- *      - No dynamic allocation or Strings
- *      - Scan/debounce/retry cadence uses millis(); individual Wire
- *        transactions are synchronous with the shared-bus timeout
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - Keypad_I2C
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "Keypad_I2C.h"
 #include "I2CBus.h"
+#include "DebugLog.h"
 
 #define KEYPAD_ADDR 0x20
 
@@ -149,7 +124,7 @@ char keypad_read() {
 
     char rawKey = 0;
     if (!scanMatrix(rawKey)) {
-        if (!scanFailed) Serial.println("Keypad: I2C scan failed; input suspended");
+        if (!scanFailed) DBG_PRINTLN("Keypad: scan fail");
         scanFailed = true;
         lastFailureMs = now;
         lastStableKey = lastReportedKey = 0;
@@ -159,7 +134,7 @@ char keypad_read() {
         return 0;
     }
     if (scanFailed) {
-        Serial.println("Keypad: I2C scan restored; release keys to resume");
+        DBG_PRINTLN("Keypad: scan ok");
         scanFailed = false;
     }
 

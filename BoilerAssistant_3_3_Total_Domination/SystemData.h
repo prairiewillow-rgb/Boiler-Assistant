@@ -1,34 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - System Data API (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: SystemData.h
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Defines the SystemData structure - the single source of truth
- *    for all runtime state in the Boiler Assistant controller.
- *    Every subsystem (UI, MQTT, sensors, burn engine, seasonal
- *    logic, EEPROM) reads and writes through this deterministic,
- *    operator-visible data model.
- *
- *    Responsibilities:
- *      - Own all live sensor values
- *      - Own all operator-configurable parameters
- *      - Own all seasonal thresholds and 6-parameter profiles
- *      - Own all burn engine timers and state flags
- *      - Provide UI pointer helpers for seasonal editing
- *
- *    Architectural Notes:
- *      - No logic belongs here - only data and declarations.
- *      - All defaults are initialized in SystemData.cpp.
- *      - All modules must treat SystemData as authoritative.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - SystemData
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef SYSTEMDATA_H
@@ -37,9 +11,6 @@
 #include <Arduino.h>
 #include "SystemState.h"
 
-#define BURN_HISTORY_COUNT 12
-#define WATER_HISTORY_COUNT 720
-#define WATER_HISTORY_INTERVAL_MS 60000UL
 
 /* ============================================================
  *  SYSTEM DATA STRUCTURE
@@ -80,6 +51,13 @@ struct SystemData
     bool          boostActive;
     unsigned long boostStartMs;
     int           boostTimeSeconds;
+    uint16_t      envBoostTimeSeconds[4];
+    uint8_t       boostFanPercent;
+    uint8_t       envBoostFanPercent[4];
+    uint8_t       activeBoostFanPercent;
+    uint16_t      damperDelaySeconds;
+    uint16_t      envDamperDelaySeconds[4];
+    bool          damperDelayActive;
 
     /* ------------------------------
      *  SAFETY
@@ -205,21 +183,10 @@ struct SystemData
     bool remoteChanged;
 
     /* ------------------------------
-     *  BURN HISTORY
+     *  CURRENT BURN TIMING (history is stored on SD)
      * ------------------------------ */
-    uint32_t burnHistoryDurationSec[BURN_HISTORY_COUNT];
-    uint32_t burnHistoryIntervalSec[BURN_HISTORY_COUNT];
-    uint32_t burnHistoryStartElapsedMin[BURN_HISTORY_COUNT];
-    int16_t  burnHistoryWaterTempF[BURN_HISTORY_COUNT];
-    uint8_t  burnHistoryCount;
     unsigned long burnActiveStartMs;
     unsigned long burnLastStartMs;
-
-    int16_t       waterHistoryF[WATER_HISTORY_COUNT];
-    uint32_t      waterHistoryElapsedMin[WATER_HISTORY_COUNT];
-    uint16_t      waterHistoryCount;
-    uint16_t      waterHistoryNext;
-    unsigned long waterHistoryLastSampleMs;
 
     /* ------------------------------
      *  UPTIME
@@ -281,7 +248,6 @@ uint8_t* ui_getSeasonClampMaxPtr(EnvSeason s);
  *  CORE SYSTEMDATA API
  * ============================================================ */
 void systemdata_init();
-void systemdata_recordWaterHistory(unsigned long now);
 
 /* ============================================================
  *  EEPROM LOAD/SAVE DECLARATIONS

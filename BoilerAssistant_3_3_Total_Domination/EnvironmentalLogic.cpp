@@ -1,37 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - Environmental Logic Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: EnvironmentalLogic.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Seasonal environmental logic for the Boiler Assistant controller.
- *    This module determines the active season based on outdoor
- *    temperature and applies deterministic seasonal overrides for:
- *
- *      - Exhaust setpoint
- *      - Tank High / Tank Low setpoints
- *      - ClampMax fan limit
- *
- *    Seasonal behavior follows the Total Domination Architecture (TDA):
- *      - SystemData is the single source of truth
- *      - No UI or control logic lives here
- *      - All overrides are deterministic and operator-visible
- *
- *  Architectural Notes:
- *      - determineSeason() selects the correct season based on
- *        configured thresholds and live environmental temperature.
- *      - applySeasonalOverrides() applies Model B seasonal logic.
- *      - env_logic_init() performs the initial evaluation at boot.
- *      - environmentalLogic_update() is called periodically by the
- *        main loop to maintain seasonal correctness.
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - EnvironmentalLogic
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "EnvironmentalLogic.h"
@@ -94,6 +65,11 @@ static EnvSeason determineSeason()
 static void applySeasonalOverrides(EnvSeason s)
 {
     if (sys.envAutoSeasonEnabled) {
+    if (s >= ENV_SEASON_SUMMER && s <= ENV_SEASON_EXTREME) {
+        sys.boostTimeSeconds = sys.envBoostTimeSeconds[static_cast<uint8_t>(s)];
+        sys.boostFanPercent = sys.envBoostFanPercent[static_cast<uint8_t>(s)];
+        sys.damperDelaySeconds = sys.envDamperDelaySeconds[static_cast<uint8_t>(s)];
+    }
 
     /* Exhaust Setpoint */
     switch (s) {

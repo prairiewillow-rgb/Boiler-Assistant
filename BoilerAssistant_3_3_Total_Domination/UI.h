@@ -1,30 +1,8 @@
 /*
- * ============================================================
- *  Boiler Assistant - UI API (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: UI.h
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Public interface for the keypad-driven LCD UI subsystem.
- *    This module exposes deterministic entry points for:
- *
- *      - ui_init()       - initialize LCD + boot screen
- *      - ui_handleKey()  - process keypad input and update UI state
- *      - ui_showScreen() - render the active UI state
- *
- *    Architectural Notes:
- *      - All UI state definitions live in SystemState.h
- *      - No sensor, burn engine, or MQTT logic belongs here
- *      - Rendering is strictly operator-facing and deterministic
- *      - PCF8574 connection checks and recoverable current-screen repaint
- *      - Cached network information; invalid BME shows a sensor error
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - UI
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #ifndef UI_H

@@ -1,59 +1,32 @@
 /*
- * ============================================================
- *  Boiler Assistant - WiFi Provisioning Module (v3.3.12 "Total Domination")
- *  ------------------------------------------------------------
- *  File: WiFiProvisioning.cpp
- *  Author: The Architect Collective
- *  Maintainer: Karl (Embedded Systems Architect)
- *  License: CC BY-NC-SA 4.0
- *
- *  Description:
- *    Deterministic WiFi provisioning subsystem for the Boiler
- *    Assistant controller. Implements the Total Domination
- *    Architecture (TDA) for all credential handling and AP-mode
- *    onboarding.
- *
- *    Responsibilities:
- *      - STA-first connection using RuntimeCredentials
- *      - Saved-network retries with 30/60/120s backoff during outages
- *      - AP provisioning portal only when no saved credentials exist
- *      - Safe credential parsing + EEPROM persistence
- *      - Factory reset with full credential wipe
- *      - Export MQTT credentials for MQTTClient.cpp
- *
- *    Architectural Notes:
- *      - No blocking delays beyond required WiFi operations
- *      - No dynamic allocation except small String buffers
- *      - SystemData is the single source of truth for WiFi status
- *      - Saved credentials never fall back to AP after a missed join
- *      - One-second link checks; sockets restart after 5s stable link
- *      - WiFi.setTimeout(0) skips the core's association wait; the
- *        underlying modem commands are still synchronous
- *      - Runtime AT waits are 3s per command, not a total loop bound
- *      - Slow I/O is quarantined; bridge reset must be acknowledged
- *        before staged cleanup/reconnect (compatible firmware required)
- *      - UI/telemetry use cached network data; control uses cached UTC
- *
- *  Version:
- *      Boiler Assistant v3.3.12 "Total Domination"
- * ============================================================
+ * Boiler Assistant - WiFiProvisioning
+ * Author: The Architect Collective
+ * Maintainer: Karl (Embedded Systems Architect)
+ * License: CC BY-NC-SA 4.0
  */
 
 #include "WiFiProvisioning.h"
+#include "DebugLog.h"
 #include "RuntimeCredentials.h"
 #include "SystemData.h"
 #include "EEPROMStorage.h"   // <-- required for persistence
 #include "WiFiAPI.h"
 #include "MQTTClient.h"
 #include "PushNotify.h"
+#include "DataShare.h"
 
 #include <Arduino.h>
+#include <malloc.h>
+#include <new>
+#include <unistd.h>
 #include <WiFiS3.h>
 #include <WiFiServer.h>
 #include <OTAUpdate.h>
 #include "OTAUpdater.h"
+#include "Watchdog.h"
 
 extern SystemData sys;
+extern "C" char __HeapLimit;  // top of the heap (linker)
 
 /* ============================================================
  *  MQTT GLOBALS (used by MQTTClient.cpp)
@@ -67,18 +40,30 @@ const char* prov_mqtt_pass   = nullptr;
  *  INTERNAL STATE
  * ============================================================ */
 
-static WiFiServer provServer(80);
+// Every WiFiClient owns a 1,024-byte heap receive buffer, and a WiFiServer holds one. The setup
+// hotspot needs its server and client only while it is open, so they are created when it starts
+// and released when it closes.
+struct PortalSockets {
+    WiFiServer server{80};
+    WiFiClient client;
+};
+static PortalSockets* portal = nullptr;
 static bool apMode   = false;
 static bool newCreds = false;
+static bool stationAddressReady = false;
 static unsigned long lastNetworkCheckMs = 0;
 static unsigned long lastJoinAttemptMs = 0;
 static unsigned long joinRetryMs = 30000UL;
+static unsigned long offlineSinceMs = 0;
+static bool offlineTiming = false;
 static unsigned long linkStableSinceMs = 0;
 static bool linkDetected = false;
 static bool servicesOnline = false;
 static IPAddress serviceIP;
 static int32_t cachedRSSI = 0;
+#if BOILER_WIFI_RSSI_ENABLED
 static unsigned long lastRSSIMs = 0;
+#endif
 static unsigned long cachedUTC = 0;
 static unsigned long utcAnchorMs = 0;
 static unsigned long lastTimeAttemptMs = 0;
@@ -89,7 +74,9 @@ enum BridgeRecovery { BRIDGE_NORMAL, BRIDGE_QUIET, BRIDGE_BOOT_WAIT,
 static BridgeRecovery bridgeRecovery = BRIDGE_NORMAL;
 static unsigned long bridgeRecoveryMs = 0;
 static unsigned long bridgeQuietIntervalMs = 15000UL;
-static bool bridgeWasReset = false;
+static bool bridgeResetIssued = false;
+static uint16_t joinCount = 0, lostCount = 0, chipResetCount = 0;
+static bool setupAfterRecovery = false;
 
 IPAddress wifi_prov_cachedIP() { return serviceIP; }
 int32_t wifi_prov_cachedRSSI() { return cachedRSSI; }
@@ -107,29 +94,56 @@ bool wifi_prov_prepareIo() {
     return true;
 }
 
-bool wifi_prov_prepareClientIo() {
+bool wifi_prov_prepareClientIo(unsigned long limitMs) {
     if (bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT) return false;
+    if (bridgeResetIssued && bridgeRecovery != BRIDGE_NORMAL) return false;
     if (ota_isActive()) {
         // OTA explicitly closes runtime sockets after entering its safe state.
         modem.timeout(MODEM_TIMEOUT);
         return true;
     }
-    modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+    modem.timeout(limitMs);
     return true;
 }
 
-void wifi_prov_finishIo(unsigned long startedMs, const char* source, unsigned long limitMs) {
-    if (ota_isActive() || bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT ||
-        millis() - startedMs < limitMs) return;
-    Serial.print("WiFi: modem slow: ");
+static void startBridgeRecovery(const char* source) {
+    Serial.print("WiFi: recovery: ");
     Serial.println(source);
     sys.wifiOK = false;
     bridgeRecovery = BRIDGE_QUIET;
     bridgeRecoveryMs = millis();
     bridgeQuietIntervalMs = 15000UL;
-    bridgeWasReset = false;
+    bridgeResetIssued = false;
     // Do not issue socket-close commands into a possibly unfinished AT reply.
-    // Quiet period, acknowledged bridge reset and reboot wait precede cleanup.
+    // Reset/reboot readiness precedes local-only cleanup of old handles.
+}
+
+void wifi_prov_requestRecovery(const char* source) {
+    if (apMode || ((!runtimeCreds.hasCredentials || runtimeCreds.ssid[0] == '\0') && !setupAfterRecovery) ||
+        ota_isActive() || bridgeRecovery != BRIDGE_NORMAL) return;
+    startBridgeRecovery(source);
+}
+
+void wifi_prov_finishIo(unsigned long startedMs, const char* source, unsigned long limitMs) {
+    if (ota_isActive() || bridgeRecovery == BRIDGE_QUIET || bridgeRecovery == BRIDGE_BOOT_WAIT ||
+        millis() - startedMs < limitMs) return;
+    startBridgeRecovery(source);
+}
+
+bool wifi_prov_setHostname() {
+    if (!wifi_prov_prepareClientIo()) return false;
+    // Core 1.6.0 setHostname() omits ':' from the expected response prompt.
+    std::string response;
+    unsigned long startedMs = millis();
+    bool success = modem.write(PROMPT(_HOSTNAME), response, "%s%s\r\n",
+                               CMD_WRITE(_HOSTNAME), BOILER_WIFI_HOSTNAME);
+    wifi_prov_finishIo(startedMs, "WiFi hostname");
+    if (!success) {
+        Serial.println("WiFi: hostname command failed");
+        wifi_prov_requestRecovery("WiFi hostname failed");
+        return false;
+    }
+    return wifi_prov_prepareClientIo();
 }
 
 static bool serviceBridgeRecovery() {
@@ -139,20 +153,32 @@ static bool serviceBridgeRecovery() {
         if (now - bridgeRecoveryMs < bridgeQuietIntervalMs) return true;
         modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
         OTAUpdate bridge;
+        ++chipResetCount;
+        bridgeResetIssued = true;
         if (bridge.reset() != 0) {
-            Serial.println("WiFi: reset no ACK; offline 60s");
-            bridgeQuietIntervalMs = 60000UL;
-            bridgeRecoveryMs = millis();
-            return true;
+            Serial.println("WiFi: reset no ACK; checking after reboot wait");
+        } else {
+            Serial.println("WiFi: reset ACK; checking after reboot wait");
         }
-        Serial.println("WiFi: reset ACK; reboot wait");
-        bridgeWasReset = true;
         bridgeRecovery = BRIDGE_BOOT_WAIT;
         bridgeRecoveryMs = millis();
         return true;
     }
     if (bridgeRecovery == BRIDGE_BOOT_WAIT) {
         if (now - bridgeRecoveryMs < 5000UL) return true;
+        modem.timeout(MODEM_RUNTIME_TIMEOUT_MS);
+        unsigned long probeMs = millis();
+        const char* firmware = WiFi.firmwareVersion();
+        if (firmware[0] == '\0' || strcmp(firmware, "99.99.99") == 0 ||
+            millis() - probeMs >= MODEM_RUNTIME_TIMEOUT_MS) {
+            Serial.println("WiFi: bridge not ready; retry in 60s");
+            bridgeRecovery = BRIDGE_QUIET;
+            bridgeQuietIntervalMs = 60000UL;
+            bridgeRecoveryMs = millis();
+            return true;
+        }
+        Serial.println("WiFi: bridge responding; discard old sockets");
+        stationAddressReady = false;
         bridgeRecovery = BRIDGE_CLOSE_HTTP;
         return true;
     }
@@ -171,19 +197,21 @@ static bool serviceBridgeRecovery() {
         if (bridgeRecovery == BRIDGE_QUIET) return true;
         servicesOnline = false;
         linkDetected = false;
+        if (bridgeResetIssued) offlineTiming = false;
         serviceIP = IPAddress();
         cachedRSSI = 0;
         joinRetryMs = 30000UL;
-        lastJoinAttemptMs = bridgeWasReset ? millis() - joinRetryMs : millis();
+        lastJoinAttemptMs = bridgeResetIssued ? millis() - joinRetryMs : millis();
+        bridgeResetIssued = false;
         bridgeRecovery = BRIDGE_NORMAL;
-        Serial.println("WiFi: sockets cleared; retry");
+        DBG_PRINTLN("WiFi: sockets cleared");
     }
     if (millis() - cleanupStartMs >= MODEM_RUNTIME_TIMEOUT_MS) {
         bridgeRecovery = BRIDGE_QUIET;
         bridgeRecoveryMs = millis();
         bridgeQuietIntervalMs = 15000UL;
-        bridgeWasReset = false;
-        Serial.println("WiFi: cleanup stalled; quarantine");
+        bridgeResetIssued = false;
+        DBG_PRINTLN("WiFi: socket stall");
     }
     return true;
 }
@@ -191,10 +219,50 @@ static bool serviceBridgeRecovery() {
 static void beginStationAttempt() {
     // Renesas WiFiS3 checks _timeout only after sending BEGINSTA. Zero skips
     // its 10-second status spin; association/DHCP are checked on later passes.
+    if (!wifi_prov_prepareIo()) return;
     WiFi.setTimeout(0);
+    if (!wifi_prov_setHostname()) return;
+    if (!wifi_prov_applyNetworkConfig()) return;
+    stationAddressReady = true;
+    if (!wifi_prov_prepareIo()) return;
+    unsigned long operationMs = millis();
     WiFi.begin(runtimeCreds.ssid, runtimeCreds.pass);
+    wifi_prov_finishIo(operationMs, "WiFi join");
     lastJoinAttemptMs = millis();
-    Serial.println("WiFi: joining; control offline");
+    ++joinCount;
+    Serial.println("WiFi: joining");
+}
+
+bool wifi_prov_applyNetworkConfig() {
+    if (!wifi_prov_prepareClientIo()) return false;
+    const char* error = network_validate(networkSettings);
+    if (error) {
+        Serial.println(error);
+        return false;
+    }
+    IPAddress ip, gateway, subnet, dns;
+    if (networkSettings.fixed) {
+        for (uint8_t i = 0; i < 4; ++i) {
+            ip[i] = networkSettings.ip[i];
+            gateway[i] = networkSettings.gateway[i];
+            subnet[i] = networkSettings.subnet[i];
+            dns[i] = networkSettings.dns[i];
+        }
+    }
+    // WiFiS3 config() discards the ACK and also configures the setup AP.
+    // SETIP uses local,gateway,mask,DNS; all zeros explicitly restart DHCP.
+    std::string response;
+    unsigned long startedMs = millis();
+    bool success = modem.write(PROMPT(_SETIP), response, "%s%s,%s,%s,%s\r\n",
+        CMD_WRITE(_SETIP), ip.toString().c_str(), gateway.toString().c_str(),
+        subnet.toString().c_str(), dns.toString().c_str());
+    wifi_prov_finishIo(startedMs, "WiFi addressing");
+    if (!success) {
+        Serial.println("WiFi: address command failed; not joining");
+        wifi_prov_requestRecovery("WiFi addressing failed");
+        return false;
+    }
+    return wifi_prov_prepareClientIo();
 }
 
 /* Simple HTML portal */
@@ -203,12 +271,22 @@ static const char* PROV_HTML =
 "<h2>Boiler Assistant WiFi Setup</h2>"
 "<form method='POST'>"
 "Your name:<br><input name='displayName' maxlength='31'><br><br>"
-"WiFi SSID:<br><input name='ssid'><br>"
-"WiFi Password:<br><input name='pass' type='password'><br><br>"
-"MQTT Server:<br><input name='mqttServer'><br>"
-"MQTT User:<br><input name='mqttUser'><br>"
-"MQTT Password:<br><input name='mqttPass' type='password'><br><br>"
-"Control/API Password:<br><input name='controlPass' type='password'><br><br>"
+"WiFi SSID:<br><input name='ssid' maxlength='31' required><br>"
+"WiFi Password:<br><input name='pass' maxlength='63' type='password' required><br><br>"
+"Address mode:<br><select name='addressMode'><option value='dhcp'>Automatic (DHCP)</option>"
+"<option value='fixed'>Fixed IP</option></select><br>"
+"<p>Fixed IP only: use an unused address outside your router's DHCP pool. "
+"Use your network's gateway, subnet and DNS. Wrong settings can make the unit unreachable. "
+"To recover: Networking &gt; Factory Reset on the keypad, then run setup again.</p>"
+"IP address:<br><input name='ip' maxlength='15' placeholder='192.168.1.50'><br>"
+"Gateway:<br><input name='gateway' maxlength='15' placeholder='192.168.1.1'><br>"
+"Subnet:<br><input name='subnet' maxlength='15' placeholder='255.255.255.0'><br>"
+"DNS:<br><input name='dns' maxlength='15' placeholder='192.168.1.1'><br><br>"
+"Other blank fields keep existing settings.<br>"
+"MQTT Server:<br><input name='mqttServer' maxlength='63'><br>"
+"MQTT User:<br><input name='mqttUser' maxlength='31'><br>"
+"MQTT Password:<br><input name='mqttPass' maxlength='63' type='password'><br><br>"
+"Control/API Password:<br><input name='controlPass' maxlength='31' type='password'><br><br>"
 "<input type='submit' value='Save'>"
 "</form></body></html>";
 
@@ -217,17 +295,22 @@ static const char* PROV_HTML =
  * ============================================================ */
 
 void wifi_prov_factoryReset() {
-    Serial.println("WiFi: FACTORY RESET");
+    DBG_PRINTLN("WiFi: FACTORY RESET");
 
-    memset(&runtimeCreds, 0, sizeof(runtimeCreds));
-    runtimeCreds.hasCredentials = false;
+    RuntimeCredentials cleared;
+    NetworkSettings automatic;
+    if (!eeprom_saveProvisioning(cleared, automatic)) {
+        Serial.println("WiFi: network reset save failed; not rebooting");
+        return;
+    }
+    runtimeCreds = cleared;
+    networkSettings = automatic;
+    // A factory reset usually means a new owner, who must opt in again.
+    datashare_clearConsent();
 
     sys.wifiOK = false;
 
-    // Persist the cleared credentials
-    eeprom_saveRuntimeCreds();
-
-    Serial.println("WiFi: reset reboot");
+    DBG_PRINTLN("WiFi: factory reset; rebooting");
     delay(1000);
     NVIC_SystemReset();
 }
@@ -237,7 +320,7 @@ void wifi_prov_factoryReset() {
  * ============================================================ */
 
 static void startAP() {
-    Serial.println("WiFi: AP start");
+    DBG_PRINTLN("WiFi: starting AP");
 
     WiFi.end();
     WiFi.disconnect();
@@ -246,33 +329,40 @@ static void startAP() {
     WiFi.config(
         IPAddress(192,168,4,1),
         IPAddress(0,0,0,0),
+        IPAddress(192,168,4,1),
         IPAddress(255,255,255,0)
     );
 
     int result = WiFi.beginAP("BoilerAssistant-Setup");
 
-    Serial.print("WiFi: AP result=");
-    Serial.println(result);
+    DBG_PRINT("WiFi: AP result: ");
+    DBG_PRINTLN(result);
 
     apMode = true;
     sys.wifiOK = false;
 
-    provServer.begin();
+    if (!portal) portal = new (std::nothrow) PortalSockets;
+    if (portal) portal->server.begin();
+    else Serial.println("WiFi setup: not enough RAM to open the setup page");
 }
 
 /* ============================================================
- *  INIT: saved STA retries, AP only without credentials
+ *  INIT: saved STA retries, AP if unconfigured/corrupt addressing
  * ============================================================ */
 
 void wifi_prov_init() {
-    Serial.println("WiFi: init; saved STA retry/no creds AP");
+    DBG_PRINTLN("WiFi: init");
 
     sys.wifiOK = false;
-    WiFi.setHostname("boilerassistant");
+    if (!eeprom_loadNetworkSettings()) {
+        Serial.println("WiFi: saved addressing invalid; opening setup, not DHCP");
+        startAP();
+        return;
+    }
 
     if (runtimeCreds.hasCredentials && runtimeCreds.ssid[0] != 0) {
-        Serial.print("WiFi: SSID: ");
-        Serial.println(runtimeCreds.ssid);
+        DBG_PRINT("WiFi: SSID: ");
+        DBG_PRINTLN(runtimeCreds.ssid);
 
         WiFi.end();
         WiFi.disconnect();
@@ -286,7 +376,7 @@ void wifi_prov_init() {
         return;
     }
 
-    Serial.println("WiFi: no creds; AP mode");
+    DBG_PRINTLN("WiFi: no creds; AP");
     startAP();
 }
 
@@ -302,16 +392,100 @@ bool wifi_prov_isAPMode() {
     return apMode;
 }
 
+// Lowest free-heap reading seen. It is sampled while requests are served and in each report,
+// so a brief dip between samples can be missed.
+static uint32_t lowestFreeHeap = UINT32_MAX;
+
+static uint32_t freeHeapNow() {
+    struct mallinfo heap = mallinfo();
+    return static_cast<uint32_t>(heap.fordblks) +
+           static_cast<uint32_t>(&__HeapLimit - static_cast<char*>(sbrk(0)));
+}
+
+void wifi_prov_sampleHeap() {
+    const uint32_t freeNow = freeHeapNow();
+    if (freeNow < lowestFreeHeap) lowestFreeHeap = freeNow;
+}
+
+// Largest block malloc can supply right now (up to 8 KB, to the nearest 16 bytes).
+// Each trial block is freed straight away. Used only for the on-demand diagnostic report.
+static uint16_t largestFreeBlock() {
+    uint16_t low = 0, high = 8192;
+    while (high - low > 16) {
+        const uint16_t mid = low + (high - low) / 2;
+        void* block = malloc(mid);
+        if (block) {
+            free(block);
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    return low;
+}
+
+// Uses only cached state: no bridge commands. The largest-block probe runs only when asked.
+const char* wifi_prov_netText(bool probeLargestBlock) {
+    static char text[256];
+    // Probe first: its temporary blocks move memory between the reusable and unallocated figures.
+    char largest[8] = "na";
+    if (probeLargestBlock) snprintf(largest, sizeof(largest), "%u", static_cast<unsigned>(largestFreeBlock()));
+    struct mallinfo heap = mallinfo();
+    wifi_prov_sampleHeap();
+    uint32_t slowMs;
+    const char* slow = watchdog_slowStage(slowMs);
+    int n = snprintf(text, sizeof(text), "up=%lu wifi=%d svc=%d link=%d br=%d rssi=%ld",
+                     millis() / 1000UL, sys.wifiOK ? 1 : 0, servicesOnline ? 1 : 0,
+                     linkDetected ? 1 : 0, static_cast<int>(bridgeRecovery),
+                     static_cast<long>(cachedRSSI));
+    if (n > 0 && n < static_cast<int>(sizeof(text)))
+        n += wifiapi_statusText(text + n, sizeof(text) - n);
+    if (n > 0 && n < static_cast<int>(sizeof(text)))
+        snprintf(text + n, sizeof(text) - n,
+                 " heap=%u+%ld blk=%s low=%lu stk=%u wd=%u slow=%s/%lums joins=%u lost=%u chip=%u",
+                 static_cast<unsigned>(heap.fordblks),
+                 static_cast<long>(&__HeapLimit - static_cast<char*>(sbrk(0))),
+                 largest, static_cast<unsigned long>(lowestFreeHeap),
+                 watchdog_stackPeak(), watchdog_resetCount(), slow,
+                 static_cast<unsigned long>(slowMs), joinCount, lostCount, chipResetCount);
+    return text;
+}
+
+// One serial line every 30 s so a field log shows which layer stops when the
+// dashboard drops.
+static void printNetStatus() {
+    static unsigned long lastStatusMs = 0;
+    unsigned long now = millis();
+    if (now - lastStatusMs < 30000UL) return;
+    lastStatusMs = now;
+    Serial.print("NET: ");
+    Serial.println(wifi_prov_netText());
+}
+
 void wifi_prov_networkLoop() {
-    if (apMode || !runtimeCreds.hasCredentials || runtimeCreds.ssid[0] == '\0') return;
+    if (apMode || ((!runtimeCreds.hasCredentials || runtimeCreds.ssid[0] == '\0') && !setupAfterRecovery)) return;
+    printNetStatus();
     if (cachedUTC != 0 && millis() - utcAnchorMs >= 86400000UL) {
         cachedUTC = 0;
-        Serial.println("WiFi: clock expired; clean waits sync");
+        DBG_PRINTLN("WiFi: clock expired");
     }
     if (ota_isActive() || serviceBridgeRecovery()) return;
+    if (setupAfterRecovery) {
+        setupAfterRecovery = false;
+        startAP();
+        return;
+    }
     unsigned long now = millis();
     if (now - lastNetworkCheckMs < 1000UL) return;
     lastNetworkCheckMs = now;
+    // A rebooted bridge may auto-associate using DHCP before we reconfigure it.
+    if (!stationAddressReady) {
+        if (now - lastJoinAttemptMs >= joinRetryMs) {
+            beginStationAttempt();
+            joinRetryMs = min(joinRetryMs * 2UL, 120000UL);
+        }
+        return;
+    }
 
     unsigned long operationMs = millis();
     bool connected = WiFi.status() == WL_CONNECTED;
@@ -324,17 +498,28 @@ void wifi_prov_networkLoop() {
         wifi_prov_finishIo(operationMs, "WiFi IP");
         if (bridgeRecovery != BRIDGE_NORMAL) return;
         connected = ip != IPAddress(0, 0, 0, 0);
+        if (connected && networkSettings.fixed) {
+            bool matches = true;
+            for (uint8_t i = 0; i < 4; ++i)
+                if (ip[i] != networkSettings.ip[i]) matches = false;
+            if (!matches) {
+                startBridgeRecovery("fixed IP not applied");
+                return;
+            }
+        }
     }
 
     if (servicesOnline && (!connected || ip != serviceIP)) {
         sys.wifiOK = false;
         servicesOnline = false;
-        bridgeWasReset = false;
+        bridgeResetIssued = false;
         bridgeRecovery = BRIDGE_CLOSE_HTTP;
         linkDetected = false;
         lastJoinAttemptMs = millis();
         joinRetryMs = 30000UL;
-        Serial.println("WiFi: link/IP lost; control active");
+        offlineTiming = false;
+        ++lostCount;
+        Serial.println("WiFi: link lost");
         serviceIP = IPAddress();
         cachedRSSI = 0;
         return;
@@ -352,12 +537,15 @@ void wifi_prov_networkLoop() {
             serviceIP = ip;
             joinRetryMs = 30000UL;
             wifiapi_init();
-            Serial.print("WiFi: link restored; IP: ");
+            if (!sys.wifiOK || bridgeRecovery != BRIDGE_NORMAL) return;
+            offlineTiming = false;
+            Serial.print("WiFi: online ");
             Serial.println(ip);
             return;
         }
         if (servicesOnline) {
-            if (!timeAttempted || now - lastTimeAttemptMs >= 60000UL) {
+            const unsigned long timeRetryMs = cachedUTC ? 60000UL : 10000UL;
+            if (!timeAttempted || now - lastTimeAttemptMs >= timeRetryMs) {
                 timeAttempted = true;
                 lastTimeAttemptMs = now;
                 operationMs = millis();
@@ -368,25 +556,36 @@ void wifi_prov_networkLoop() {
                     cachedUTC = utc;
                     utcAnchorMs = millis();
                 } else {
-                    Serial.println("WiFi: no time; keep valid cache");
+                    DBG_PRINTLN("WiFi: no NTP; cached");
                 }
-            } else if (now - lastRSSIMs >= 15000UL) {
+            }
+#if BOILER_WIFI_RSSI_ENABLED
+            else if (now - lastRSSIMs >= 15000UL) {
                 lastRSSIMs = now;
                 operationMs = millis();
                 int32_t rssi = WiFi.RSSI();
                 wifi_prov_finishIo(operationMs, "WiFi RSSI");
                 if (bridgeRecovery == BRIDGE_NORMAL) cachedRSSI = rssi;
             }
+#endif
         }
         return;
     }
 
+    if (!offlineTiming) {
+        offlineSinceMs = now;
+        offlineTiming = true;
+    }
+    // Escalate failed joins even when AT commands still answer promptly.
+    // Brief associations do not clear this deadline until services are online.
+    if (now - offlineSinceMs >= 300000UL) {
+        startBridgeRecovery("offline 5 min");
+        return;
+    }
     linkDetected = false;
     sys.wifiOK = false;
     if (now - lastJoinAttemptMs < joinRetryMs) return;
-    operationMs = millis();
     beginStationAttempt();
-    wifi_prov_finishIo(operationMs, "WiFi join");
     // A marginal network gets breathing room: 30s, 60s, then 120s.
     joinRetryMs = min(joinRetryMs * 2UL, 120000UL);
 }
@@ -395,117 +594,255 @@ void wifi_prov_networkLoop() {
  *  FORM PARSER
  * ============================================================ */
 
-static void parseForm(const String& body) {
-    auto getVal = [&](const String& key) {
-        int p = body.indexOf(key + "=");
-        if (p < 0) return String("");
-        int s = p + key.length() + 1;
-        int e = body.indexOf('&', s);
-        if (e < 0) e = body.length();
-        String v = body.substring(s, e);
-        v.replace('+', ' ');
-        return v;
-    };
+static RuntimeCredentials savedNetworkCredentials;
+static NetworkSettings savedNetworkSettings;
+static bool savedNetworkPending = false;
 
-    String ssid       = getVal("ssid");
-    String pass       = getVal("pass");
-    String mqttServer = getVal("mqttServer");
-    String mqttUser   = getVal("mqttUser");
-    String mqttPass   = getVal("mqttPass");
-    String controlPass = getVal("controlPass");
-    String displayName = getVal("displayName");
+bool wifi_prov_networkChangePending() { return savedNetworkPending; }
 
-    if (ssid.length() == 0 || pass.length() == 0) {
-        Serial.println("WiFi: missing SSID/password");
-        return;
+void wifi_prov_applySavedNetwork() {
+    if (!savedNetworkPending || ota_isActive()) return;
+    runtimeCreds = savedNetworkCredentials;
+    networkSettings = savedNetworkSettings;
+    savedNetworkPending = false;
+    setupAfterRecovery = !runtimeCreds.hasCredentials;
+    stationAddressReady = false;
+    wifi_prov_requestRecovery("network settings changed");
+}
+
+static int formHex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool formValue(const String& body, const char* key, String& value) {
+    bool found = false;
+    unsigned start = 0;
+    while (start < body.length()) {
+        int end = body.indexOf('&', start);
+        if (end < 0) end = body.length();
+        int equals = body.indexOf('=', start);
+        if (equals < 0 || equals >= end) return false;
+        if (body.substring(start, equals) == key) {
+            if (found) return false;
+            found = true;
+            for (int i = equals + 1; i < end; ++i) {
+                char c = body[i];
+                if (c == '+') c = ' ';
+                else if (c == '%') {
+                    if (i + 2 >= end) return false;
+                    int high = formHex(body[++i]);
+                    int low = formHex(body[++i]);
+                    if (high < 0 || low < 0) return false;
+                    c = (high << 4) | low;
+                }
+                if (c == '\0' || c == '\r' || c == '\n') return false;
+                if (!value.concat(c)) return false;
+            }
+        }
+        start = end + 1;
     }
+    return true;
+}
 
-    // Safe copies with guaranteed null-termination
-    strncpy(runtimeCreds.ssid, ssid.c_str(), sizeof(runtimeCreds.ssid) - 1);
-    runtimeCreds.ssid[sizeof(runtimeCreds.ssid) - 1] = '\0';
-
-    strncpy(runtimeCreds.pass, pass.c_str(), sizeof(runtimeCreds.pass) - 1);
-    runtimeCreds.pass[sizeof(runtimeCreds.pass) - 1] = '\0';
-
-    strncpy(runtimeCreds.mqttServer, mqttServer.c_str(), sizeof(runtimeCreds.mqttServer) - 1);
-    runtimeCreds.mqttServer[sizeof(runtimeCreds.mqttServer) - 1] = '\0';
-
-    strncpy(runtimeCreds.mqttUser, mqttUser.c_str(), sizeof(runtimeCreds.mqttUser) - 1);
-    runtimeCreds.mqttUser[sizeof(runtimeCreds.mqttUser) - 1] = '\0';
-
-    strncpy(runtimeCreds.mqttPass, mqttPass.c_str(), sizeof(runtimeCreds.mqttPass) - 1);
-    runtimeCreds.mqttPass[sizeof(runtimeCreds.mqttPass) - 1] = '\0';
-
-    strncpy(runtimeCreds.controlPass, controlPass.c_str(), sizeof(runtimeCreds.controlPass) - 1);
-    runtimeCreds.controlPass[sizeof(runtimeCreds.controlPass) - 1] = '\0';
-
-    displayName.trim();
-    displayName.toUpperCase();
-    if (displayName.length() > 20) displayName.remove(20);
-    if (displayName.length() >= sizeof(runtimeCreds.displayName)) {
-        displayName.remove(sizeof(runtimeCreds.displayName) - 1);
+const char* wifi_prov_saveNetwork(const String& body, bool reset) {
+    if (savedNetworkPending || bridgeRecovery != BRIDGE_NORMAL || ota_isActive())
+        return "Network change or recovery already in progress.";
+    savedNetworkCredentials = runtimeCreds;
+    savedNetworkSettings = NetworkSettings();
+    if (reset) {
+        memset(savedNetworkCredentials.ssid, 0, sizeof(savedNetworkCredentials.ssid));
+        memset(savedNetworkCredentials.pass, 0, sizeof(savedNetworkCredentials.pass));
+        savedNetworkCredentials.hasCredentials = false;
+    } else {
+        const char* keys[] = {"ssid", "pass", "addressMode", "ip", "gateway", "subnet", "dns"};
+        String values[7];
+        for (uint8_t i = 0; i < 7; ++i)
+            if (!formValue(body, keys[i], values[i])) return "Invalid or duplicate network fields.";
+        if (values[0].length() == 0 || values[0].length() >= sizeof(runtimeCreds.ssid) ||
+            values[1].length() >= sizeof(runtimeCreds.pass))
+            return "SSID must be 1-31 bytes and Wi-Fi password at most 63 bytes.";
+        if (values[1].length() == 0 && values[0] != runtimeCreds.ssid)
+            return "Enter the Wi-Fi password when changing networks.";
+        strcpy(savedNetworkCredentials.ssid, values[0].c_str());
+        if (values[1].length()) strcpy(savedNetworkCredentials.pass, values[1].c_str());
+        savedNetworkCredentials.hasCredentials = true;
+        if (values[2] == "fixed") {
+            savedNetworkSettings.fixed = 1;
+            uint8_t* targets[] = {savedNetworkSettings.ip, savedNetworkSettings.gateway,
+                                  savedNetworkSettings.subnet, savedNetworkSettings.dns};
+            for (uint8_t i = 0; i < 4; ++i)
+                if (!network_parseIPv4(values[i + 3].c_str(), targets[i]))
+                    return "Enter all four Fixed IP fields as dotted IPv4 addresses.";
+        } else if (values[2] != "dhcp") return "Select Automatic (DHCP) or Fixed IP.";
+        const char* error = network_validate(savedNetworkSettings);
+        if (error) return error;
     }
-    strncpy(runtimeCreds.displayName, displayName.c_str(),
-            sizeof(runtimeCreds.displayName) - 1);
-    runtimeCreds.displayName[sizeof(runtimeCreds.displayName) - 1] = '\0';
+    if (!eeprom_saveProvisioning(savedNetworkCredentials, savedNetworkSettings))
+        return "Network save failed; current connection unchanged. Retry before disconnecting.";
+    savedNetworkPending = true;
+    return nullptr;
+}
 
-    runtimeCreds.hasCredentials = true;
+static const char* parseForm(const String& body) {
+    const char* keys[] = {"ssid", "pass", "mqttServer", "mqttUser", "mqttPass",
+                         "controlPass", "displayName", "addressMode",
+                         "ip", "gateway", "subnet", "dns"};
+    String values[12];
+    for (uint8_t i = 0; i < 12; ++i)
+        if (!formValue(body, keys[i], values[i])) return "Invalid or duplicate form fields.";
+    RuntimeCredentials credentials = runtimeCreds;
+    char* targets[] = {credentials.ssid, credentials.pass, credentials.mqttServer,
+                       credentials.mqttUser, credentials.mqttPass, credentials.controlPass,
+                       credentials.displayName};
+    const unsigned limits[] = {32, 64, 64, 32, 64, 32, 32};
+    if (values[0].length() == 0 || values[1].length() == 0)
+        return "SSID and WiFi password are required.";
+    for (uint8_t i = 0; i < 7; ++i) {
+        if (values[i].length() >= limits[i]) return "A credential field is too long.";
+    }
+    values[6].trim();
+    values[6].toUpperCase();
+    if (values[6].length() > 20) values[6].remove(20);
+    for (uint8_t i = 0; i < 7; ++i)
+        if (i < 2 || values[i].length()) strcpy(targets[i], values[i].c_str());
+    NetworkSettings settings;
+    if (values[7] == "fixed") {
+        settings.fixed = 1;
+        if (!network_parseIPv4(values[8].c_str(), settings.ip) ||
+            !network_parseIPv4(values[9].c_str(), settings.gateway) ||
+            !network_parseIPv4(values[10].c_str(), settings.subnet) ||
+            !network_parseIPv4(values[11].c_str(), settings.dns))
+            return "Enter all four Fixed IP fields as dotted IPv4 addresses.";
+    } else if (values[7] != "dhcp") return "Select Automatic (DHCP) or Fixed IP.";
+    const char* error = network_validate(settings);
+    if (error) return error;
+    credentials.hasCredentials = true;
+    if (!eeprom_saveProvisioning(credentials, settings))
+        return "EEPROM save failed. Stay in setup and try again; settings were not committed.";
+    runtimeCreds = credentials;
+    networkSettings = settings;
     newCreds = true;
-
     prov_mqtt_server = runtimeCreds.mqttServer;
-    prov_mqtt_user   = runtimeCreds.mqttUser;
-    prov_mqtt_pass   = runtimeCreds.mqttPass;
-
-    // Persist credentials
-    eeprom_saveRuntimeCreds();
-
-    Serial.println("WiFi: credentials saved");
+    prov_mqtt_user = runtimeCreds.mqttUser;
+    prov_mqtt_pass = runtimeCreds.mqttPass;
+    return nullptr;
 }
 
 /* ============================================================
  *  LOOP: AP Portal
  * ============================================================ */
 
-void wifi_prov_loop() {
-    if (!apMode) return;
+static String portalRequest;
+static bool portalReading = false;
+static unsigned long portalStartedMs = 0;
 
-    WiFiClient client = provServer.available();
-    if (!client) return;
+static void portalReply(const char* status, const char* message) {
+    portal->client.print("HTTP/1.1 ");
+    portal->client.println(status);
+    portal->client.println("Content-Type: text/html; charset=utf-8");
+    portal->client.println("Cache-Control: no-store");
+    portal->client.println("Connection: close");
+    portal->client.println();
+    portal->client.print(message);
+    portal->client.stop();
+    portalRequest = "";
+    portalReading = false;
+}
 
-    client.setTimeout(25);
-    String req;
-    while (client.available()) {
-        req += (char)client.read();
-    }
-
-    if (req.length() == 0) return;
-
-    Serial.println("WiFi: REQUEST BEGIN");
-    Serial.println(req);
-    Serial.println("WiFi: REQUEST END");
-
-    if (req.startsWith("POST ")) {
-        int bodyPos = req.indexOf("\r\n\r\n");
-        if (bodyPos > 0) {
-            String body = req.substring(bodyPos + 4);
-            parseForm(body);
+static const char* portalLength(const String& headers, int& length) {
+    bool found = false;
+    unsigned start = headers.indexOf("\r\n") + 2;
+    while (start < headers.length()) {
+        int end = headers.indexOf("\r\n", start);
+        if (end < 0) end = headers.length();
+        String line = headers.substring(start, end);
+        line.toLowerCase();
+        if (line.startsWith("transfer-encoding:")) return "Transfer encoding is not supported.";
+        if (line.startsWith("content-length:")) {
+            if (found) return "Duplicate Content-Length.";
+            found = true;
+            String value = line.substring(15);
+            value.trim();
+            if (value.length() == 0 || value.length() > 4) return "Invalid Content-Length.";
+            length = 0;
+            for (unsigned i = 0; i < value.length(); ++i) {
+                if (value[i] < '0' || value[i] > '9') return "Invalid Content-Length.";
+                length = length * 10 + value[i] - '0';
+            }
         }
+        start = end + 2;
+    }
+    if (!found || length <= 0 || length > 1536) return "POST body must be 1-1536 bytes.";
+    return nullptr;
+}
 
-        client.println("HTTP/1.1 200 OK");
-        client.println("Content-Type: text/html");
-        client.println();
-        client.println("<html><body><h3>Saved. Rebooting...</h3></body></html>");
-        client.stop();
-
-        Serial.println("WiFi: RESET NOW");
-        delay(500);
-        NVIC_SystemReset();
+void wifi_prov_loop() {
+    if (!apMode || !portal) return;
+    if (!portalReading) {
+        portal->client = portal->server.available();
+        if (!portal->client) return;
+        portalReading = true;
+        portalStartedMs = millis();
+        portalRequest = "";
+    }
+    if (millis() - portalStartedMs >= 5000UL) {
+        portalReply("408 Request Timeout", "Incomplete request. Return to setup and try again.");
         return;
     }
-
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: text/html");
-    client.println();
-    client.print(PROV_HTML);
-    client.stop();
+    int available = portal->client.available();
+    if (available > 0) {
+        uint8_t bytes[256];
+        int count = portal->client.read(bytes, min(available, 256));
+        if (count > 0 && (portalRequest.length() + count > 3072 ||
+            !portalRequest.concat((const char*)bytes, count))) {
+            portalReply("413 Content Too Large", "Setup request too large.");
+            return;
+        }
+    }
+    int bodyPos = portalRequest.indexOf("\r\n\r\n");
+    if (bodyPos < 0) {
+        if (portalRequest.length() > 1536)
+            portalReply("431 Request Header Fields Too Large", "Setup headers too large.");
+        return;
+    }
+    if (bodyPos > 1536) {
+        portalReply("431 Request Header Fields Too Large", "Setup headers too large.");
+        return;
+    }
+    if (portalRequest.startsWith("GET / ")) {
+        portalReply("200 OK", PROV_HTML);
+        return;
+    }
+    if (!portalRequest.startsWith("POST / ")) {
+        portalReply("405 Method Not Allowed", "Use the setup form.");
+        return;
+    }
+    int length = 0;
+    const char* error = portalLength(portalRequest.substring(0, bodyPos), length);
+    if (error) {
+        portalReply("400 Bad Request", error);
+        return;
+    }
+    int received = portalRequest.length() - bodyPos - 4;
+    if (received < length) return;
+    if (received != length) {
+        portalReply("400 Bad Request", "Incorrect request body length.");
+        return;
+    }
+    error = parseForm(portalRequest.substring(bodyPos + 4));
+    if (error) {
+        Serial.print("WiFi setup: ");
+        Serial.println(error);
+        portalReply("400 Bad Request", error);
+        return;
+    }
+    portalReply("200 OK", "<h3>Saved. Reconnecting Wi-Fi...</h3>");
+    delete portal;
+    portal = nullptr;
+    apMode = false;
+    stationAddressReady = false;
+    wifi_prov_requestRecovery("WiFi setup saved");
 }
